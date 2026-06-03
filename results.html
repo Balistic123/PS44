@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 1 Results</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 16px; line-height: 1.6; }
+.crash { color: #f66; }
+.ok { color: #666; }
+h2 { color: #fff; }
+</style>
+</head>
+<body>
+<h2>Phase 1 — PS4 13.50 Results</h2>
+
+<p class="crash"><b>CRASH:</b> original, delete-layout</p>
+<p class="ok"><b>SURVIVED:</b> delete-only, delete-yz, text-A, text-B, css-only</p>
+
+<h2>Minimum trigger</h2>
+<pre>
+1. CSS @font-face family x, unicode-range U+0042, bad URL
+2. JS FontFace A, family x, unicode-range U+0041, added to document.fonts
+3. void A.loaded  (before hook)
+4. FontFace.prototype.then getter — fires only when this === A
+5. Inside getter: deleteRule(0) on #s  +  document.body.offsetTop
+6. document.fonts.load('1em x', 'AB')  — fire-and-forget, both chars required
+</pre>
+
+<h2>What each result proved</h2>
+<ul>
+<li><b>deleteRule</b> — required (no-delete survived in Phase 0)</li>
+<li><b>offsetTop</b> — required (delete-only survived, delete-layout crashed)</li>
+<li><b>y/z FontFaces</b> — not required (delete-layout crashed without them)</li>
+<li><b>load text 'AB'</b> — both chars required ('A' and 'B' alone survived)</li>
+<li><b>JS FontFace A + then hook</b> — required (css-only survived)</li>
+<li><b>document.fonts.load</b> — required (direct A.load().then survived in Phase 0)</li>
+</ul>
+
+<h2>Phase 2 next</h2>
+<p>Confirm native crash (CE-36329-3), capture crash dump if possible, determine UAF vs other bug class, begin heap grooming for exploitability.</p>
+<p><a style="color:#6cf" href="02-crash-probe.html">Continue to Phase 2 crash probe →</a></p>
+</body>
+</html>
