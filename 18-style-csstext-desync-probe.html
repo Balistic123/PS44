@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Style vs cssText desync (18)</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 68vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+.signal { color: #6bf; font-weight: bold; }
+#t { font-family: x; font-size: 24px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">idle</div>
+<div id="summary">18: style vs cssText on zombie rule + writes + load(B). Blue = desync or write drift. One trigger. Tap Run.</div>
+<div id="controls" style="margin-bottom:8px;">
+<button id="runBtn" style="font-size:14px;padding:8px 16px;">Run probe</button>
+</div>
+<div id="log"></div>
+<div id="t">B</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (t, c) {
+        document.getElementById('status').textContent = t;
+        if (c) document.getElementById('status').style.color = c;
+    };
+})();
+
+var v = { p: 0, f: 0, w: 0, s: 0, lines: [] };
+function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 'ok'); }
+function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
+function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
+function signal(m) {
+    v.s++;
+    v.lines.push('◆ ' + m);
+    ps4log('◆ SIGNAL: ' + m, 'signal');
+}
+
+var params = new URLSearchParams(location.search);
+var REINSERT = params.get('reinsert') === '1';
+var AUTORUN = params.get('autorun') === '1';
+
+function snapStyle(rule) {
+    return JSON.stringify({
+        fontFamily: String(rule.style.fontFamily),
+        src: String(rule.style.src),
+        unicodeRange: String(rule.style.unicodeRange)
+    });
+}
+
+function snapCssText(rule) {
+    try {
+        return String(rule.cssText);
+    } catch (e) {
+        return 'err:' + e;
+    }
+}
+
+function logPair(tag, rule) {
+    var css = snapCssText(rule);
+    var sty = snapStyle(rule);
+    ps4log(tag + ' cssText len=' + css.length + ' tail=' + JSON.stringify(css.slice(-56)));
+    ps4log(tag + ' style   ' + sty);
+    return { css: css, sty: sty };
+}
+
+function checkDesync(tag, rule) {
+    var css = snapCssText(rule);
+    var sty = snapStyle(rule);
+    var cssHasUrl = css.indexOf('nonexistent-font.woff') >= 0;
+    var styleSrcEmpty = sty.indexOf('"src":""') >= 0 || sty.indexOf('"src":""') >= 0;
+    var styleUrEmpty = sty.indexOf('"unicodeRange":""') >= 0;
+
+    if (cssHasUrl && styleSrcEmpty) {
+        signal(tag + ' DESYNC: cssText has url, style.src empty');
+    } else if (cssHasUrl && !styleSrcEmpty) {
+        pass(tag + ' cssText url + style.src both present');
+    } else if (!cssHasUrl && styleSrcEmpty) {
+        weird(tag + ' both cssText and style lack url');
+    } else {
+        ps4log(tag + ' desync check inconclusive');
+    }
+    if (cssHasUrl && styleUrEmpty) {
+        signal(tag + ' DESYNC: cssText has U+42, style.unicodeRange empty');
+    }
+    return { css: css, sty: sty };
+}
+
+function probeLoad(label) {
+    var cb = document.fonts.check('1em x', 'B');
+    ps4log(label + ' check(B)=' + cb);
+    return new Promise(function (resolve) {
+        document.fonts.load('1em x', 'B').then(function (faces) {
+            ps4log(label + ' load(B) count=' + faces.length);
+            if (cb && faces.length === 0) {
+                weird(label + ' check true, load 0');
+                pass(label + ' check/load mismatch');
+            } else if (cb && faces.length > 0) {
+                pass(label + ' check and load agree (true)');
+            } else if (!cb && faces.length === 0) {
+                pass(label + ' check and load agree (false)');
+            } else {
+                weird(label + ' check false, load returned faces');
+            }
+            resolve({ check: cb, count: faces.length });
+        }).catch(function (e) {
+            ps4log(label + ' load(B) err=' + e);
+            if (cb) weird(label + ' check true, load errored');
+            resolve({ check: cb, count: -1, err: e });
+        });
+    });
+}
+
+function renderB(label) {
+    var el = document.getElementById('t');
+    el.textContent = 'B';
+    el.style.fontFamily = 'x, sans-serif';
+    el.style.fontSize = '24px';
+    var w = el.offsetWidth;
+    document.body.offsetTop;
+    ps4log(label + ' render B width=' + w);
+    return w;
+}
+
+function applyWrites(rule, tag) {
+    var before = snapStyle(rule);
+    try {
+        rule.style.fontFamily = 'evil';
+        rule.style.src = 'url(evil.woff)';
+        rule.style.unicodeRange = 'U+0043';
+        document.body.offsetTop;
+    } catch (e) {
+        fail(tag + ' writes threw ' + e);
+        return before;
+    }
+    var after = snapStyle(rule);
+    ps4log(tag + ' after writes style ' + after, after !== before ? 'signal' : '');
+    if (after !== before) signal(tag + ' style readback changed by writes');
+    else pass(tag + ' writes did not change style readback');
+
+    var css = snapCssText(rule);
+    var cssHasEvil = css.indexOf('evil') >= 0;
+    var cssHasUrl = css.indexOf('nonexistent-font.woff') >= 0;
+    if (cssHasEvil) signal(tag + ' cssText contains evil after writes');
+    else if (cssHasUrl) pass(tag + ' cssText still old url (write did not serialize)');
+    else weird(tag + ' cssText lost old url without evil');
+
+    return after;
+}
+
+function oneTrigger(sheet) {
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER deleteRule');
+                if (sheet.cssRules.length > 0) sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    if (fired) pass('trigger fired');
+    else fail('trigger never fired');
+
+    try {
+        if (document.fonts.has(A)) document.fonts.delete(A);
+    } catch (e) { ps4log('delete A: ' + e); }
+    return fired;
+}
+
+function runProbe() {
+    v.p = 0; v.f = 0; v.w = 0; v.s = 0; v.lines = [];
+    document.getElementById('log').innerHTML = '';
+    ps4status('running...', '#ff0');
+
+    ps4log('Phase 3r — style vs cssText desync (18)');
+    ps4log('reinsert=' + REINSERT);
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    var zombie = sheet.cssRules[0];
+    pass('held zombie ref');
+
+    ps4log('--- pre-trigger ---');
+    logPair('pre', zombie);
+
+    if (!oneTrigger(sheet)) {
+        ps4status('aborted', '#f66');
+        return;
+    }
+
+    ps4log('--- immediately after delete ---');
+    logPair('post-delete', zombie);
+    checkDesync('post-delete', zombie);
+
+    renderB('after delete');
+    probeLoad('after delete').then(function () {
+        ps4log('--- writes to zombie ---');
+        applyWrites(zombie, 'write#1');
+        logPair('after write#1', zombie);
+        checkDesync('after write#1', zombie);
+
+        renderB('after write#1');
+        return probeLoad('after write#1');
+    }).then(function () {
+        ps4log('--- second write burst ---');
+        applyWrites(zombie, 'write#2');
+        return probeLoad('after write#2');
+    }).then(function () {
+        renderB('after write#2');
+
+        if (REINSERT) {
+            ps4log('--- re-insert ---');
+            sheet.insertRule(
+                "@font-face { font-family: x; src: local(Helvetica); unicode-range: U+0042; }",
+                0
+            );
+            var live = sheet.cssRules[0];
+            pass('re-inserted live rule');
+            if (zombie === live) weird('zombie === live after re-insert');
+            else pass('zombie !== live (dual object)');
+
+            logPair('zombie after re-insert', zombie);
+            logPair('live rule', live);
+            checkDesync('zombie after re-insert', zombie);
+
+            renderB('after re-insert');
+            return probeLoad('after re-insert');
+        }
+    }).then(function () {
+        ps4log('--- load AB (sanity) ---');
+        return document.fonts.load('1em x', 'AB').then(function (f) {
+            ps4log('load(AB) count=' + f.length);
+        }).catch(function (e) {
+            ps4log('load(AB) err=' + e);
+        });
+    }).then(function () {
+        setTimeout(function () {
+            ps4log('========== SUMMARY ==========');
+            for (var j = 0; j < v.lines.length; j++) {
+                ps4log(v.lines[j], v.lines[j].indexOf('◆') === 0 ? 'signal' : '');
+            }
+            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w + ' Signals: ' + v.s, v.s ? 'signal' : '');
+            ps4log('Expect blue DESYNC after delete on 13.50; writes may not touch cssText');
+            ps4status('done signals=' + v.s, v.s ? '#6bf' : '#0f0');
+        }, 400);
+    });
+}
+
+document.getElementById('runBtn').onclick = runProbe;
+window.onload = function () {
+    ps4log('18 — focused desync + load(B). ?reinsert=1 for dual-object epilogue');
+    if (AUTORUN) runProbe();
+    ps4status('ready — Run probe', '#ff0');
+};
+</script>
+</body>
+</html>

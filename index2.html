@@ -111,5 +111,10 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 <a href="17-alt-signals-probe.html?write=0">17 — no style writes</a>
 <p class="desc">Blue = identity, style readback, or getComputedStyle changed (not cssText). Re-insert + dual-object checks.</p>
 
+<h3>18 — Style vs cssText desync</h3>
+<a href="18-style-csstext-desync-probe.html">18 — tap Run</a>
+<a href="18-style-csstext-desync-probe.html?reinsert=1">18 + re-insert epilogue</a>
+<p class="desc">Focused: zombie style.src clears while cssText keeps url, writes, load(B) after each step.</p>
+
 </body>
 </html>
