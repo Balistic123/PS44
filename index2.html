@@ -116,5 +116,10 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 <a href="18-style-csstext-desync-probe.html?reinsert=1">18 + re-insert epilogue</a>
 <p class="desc">Focused: zombie style.src clears while cssText keeps url, writes, load(B) after each step.</p>
 
+<h3>19 — Write inside trigger</h3>
+<a href="19-write-in-trigger-probe.html">19 — tap Run</a>
+<a href="19-write-in-trigger-probe.html?render=1">19 + render B in trigger</a>
+<p class="desc">evil writes same tick as deleteRule, then one load(B). Tests if timing beats post-delete writes (18).</p>
+
 </body>
 </html>

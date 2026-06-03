@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Write in trigger (19)</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 68vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+.signal { color: #6bf; font-weight: bold; }
+#t { font-family: x; font-size: 24px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">idle</div>
+<div id="summary">19: write evil to zombie INSIDE trigger (same tick as deleteRule), then one load(B). 18 wrote after — this writes during. Tap Run.</div>
+<div id="controls" style="margin-bottom:8px;">
+<button id="runBtn" style="font-size:14px;padding:8px 16px;">Run probe</button>
+</div>
+<div id="log"></div>
+<div id="t">B</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (t, c) {
+        document.getElementById('status').textContent = t;
+        if (c) document.getElementById('status').style.color = c;
+    };
+})();
+
+var v = { p: 0, f: 0, w: 0, s: 0, lines: [] };
+function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 'ok'); }
+function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
+function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
+function signal(m) {
+    v.s++;
+    v.lines.push('◆ ' + m);
+    ps4log('◆ SIGNAL: ' + m, 'signal');
+}
+
+var params = new URLSearchParams(location.search);
+var WRITE_IN = params.get('write') !== '0';
+var RENDER_IN = params.get('render') === '1';
+var AUTORUN = params.get('autorun') === '1';
+
+function snapStyle(rule) {
+    return JSON.stringify({
+        fontFamily: String(rule.style.fontFamily),
+        src: String(rule.style.src),
+        unicodeRange: String(rule.style.unicodeRange)
+    });
+}
+
+function snapCss(rule) {
+    try { return String(rule.cssText); } catch (e) { return 'err:' + e; }
+}
+
+function logPair(tag, rule) {
+    var css = snapCss(rule);
+    ps4log(tag + ' cssText len=' + css.length + ' ' + JSON.stringify(css.slice(0, 72)));
+    ps4log(tag + ' style ' + snapStyle(rule));
+}
+
+function checkDesync(tag, rule) {
+    var css = snapCss(rule);
+    var sty = snapStyle(rule);
+    var cssUrl = css.indexOf('nonexistent-font.woff') >= 0;
+    var cssEvil = css.indexOf('evil') >= 0;
+    var srcEmpty = sty.indexOf('"src":""') >= 0;
+    var srcEvil = sty.indexOf('evil.woff') >= 0;
+
+    if (cssUrl && srcEmpty) signal(tag + ' DESYNC cssText url vs empty style.src');
+    if (cssUrl && !srcEmpty && !srcEvil) weird(tag + ' style.src neither empty nor evil');
+    if (cssEvil) signal(tag + ' cssText contains evil');
+    if (srcEvil) signal(tag + ' style.src contains evil');
+}
+
+function writesInTrigger(rule, tag) {
+    var before = snapStyle(rule);
+    var cssBefore = snapCss(rule);
+    try {
+        rule.style.fontFamily = 'evil';
+        rule.style.src = 'url(evil.woff)';
+        rule.style.unicodeRange = 'U+0043';
+    } catch (e) {
+        fail(tag + ' writes threw ' + e);
+        return;
+    }
+    document.body.offsetTop;
+    document.documentElement.offsetTop;
+
+    var after = snapStyle(rule);
+    var cssAfter = snapCss(rule);
+    ps4log(tag + ' style before ' + before);
+    ps4log(tag + ' style after  ' + after, after !== before ? 'signal' : '');
+    if (after !== before) signal(tag + ' style changed inside trigger');
+    else pass(tag + ' style unchanged by in-trigger writes');
+
+    if (cssAfter !== cssBefore) signal(tag + ' cssText changed inside trigger');
+    else pass(tag + ' cssText unchanged inside trigger');
+
+    if (cssAfter.indexOf('evil') >= 0) signal(tag + ' cssText has evil inside trigger');
+    checkDesync(tag, rule);
+}
+
+function renderB(tag) {
+    var el = document.getElementById('t');
+    el.textContent = 'B';
+    el.style.fontFamily = 'x, sans-serif';
+    el.style.fontSize = '24px';
+    var w = el.offsetWidth;
+    document.body.offsetTop;
+    ps4log(tag + ' render B w=' + w);
+    return w;
+}
+
+function runProbe() {
+    v.p = 0; v.f = 0; v.w = 0; v.s = 0; v.lines = [];
+    document.getElementById('log').innerHTML = '';
+    ps4status('running...', '#ff0');
+
+    ps4log('Phase 3s — write in trigger (19)');
+    ps4log('writeIn=' + WRITE_IN + ' renderIn=' + RENDER_IN);
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    var zombie = sheet.cssRules[0];
+    pass('held zombie ref');
+
+    ps4log('--- pre ---');
+    logPair('pre', zombie);
+
+    var styleInTrigger = null;
+    var cssInTrigger = null;
+    var checkInTrigger = null;
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER start');
+
+                if (sheet.cssRules.length > 0) sheet.deleteRule(0);
+
+                if (WRITE_IN) writesInTrigger(zombie, 'in-trigger');
+                else pass('writes skipped (?write=0)');
+
+                checkInTrigger = document.fonts.check('1em x', 'B');
+                ps4log('in-trigger check(B)=' + checkInTrigger);
+                if (checkInTrigger) weird('check(B)=true inside trigger');
+
+                styleInTrigger = snapStyle(zombie);
+                cssInTrigger = snapCss(zombie);
+
+                if (RENDER_IN) renderB('in-trigger');
+
+                document.body.offsetTop;
+                ps4log('TRIGGER end');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+
+    if (fired) pass('trigger fired');
+    else fail('trigger never fired');
+
+    try {
+        if (document.fonts.has(A)) document.fonts.delete(A);
+    } catch (e) { ps4log('delete A: ' + e); }
+
+    ps4log('--- after trigger (same turn) ---');
+    logPair('post-sync', zombie);
+    checkDesync('post-sync', zombie);
+
+    if (styleInTrigger && snapStyle(zombie) !== styleInTrigger) {
+        signal('style drifted after trigger vs in-trigger snapshot');
+    } else {
+        pass('style same as in-trigger snapshot');
+    }
+    if (cssInTrigger && snapCss(zombie) !== cssInTrigger) {
+        signal('cssText drifted after trigger vs in-trigger snapshot');
+    } else {
+        pass('cssText same as in-trigger snapshot');
+    }
+
+    renderB('post-trigger');
+    var cb = document.fonts.check('1em x', 'B');
+    ps4log('post-trigger check(B)=' + cb);
+
+    document.fonts.load('1em x', 'B').then(function (faces) {
+        ps4log('post-trigger load(B) count=' + faces.length);
+        if (cb && faces.length === 0) {
+            weird('post-trigger check true load 0');
+            pass('check/load mismatch');
+        } else if (faces.length > 0) {
+            signal('load(B) returned ' + faces.length + ' face(s)');
+            for (var i = 0; i < faces.length; i++) {
+                ps4log('  face[' + i + '] family=' + faces[i].family + ' status=' + faces[i].status);
+            }
+        } else {
+            pass('check and load both false/empty');
+        }
+
+        setTimeout(function () {
+            ps4log('========== SUMMARY ==========');
+            for (var j = 0; j < v.lines.length; j++) {
+                ps4log(v.lines[j], v.lines[j].indexOf('◆') === 0 ? 'signal' : '');
+            }
+            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w + ' Signals: ' + v.s, v.s ? 'signal' : '');
+            ps4log('Compare to 18: post-delete writes did not stick; in-trigger may differ');
+            ps4status('done signals=' + v.s, v.s ? '#6bf' : '#0f0');
+        }, 400);
+    }).catch(function (e) {
+        ps4log('post-trigger load(B) err=' + e);
+        if (cb) weird('check true load errored');
+        ps4status('done (load err) weird=' + v.w, '#ff0');
+    });
+}
+
+document.getElementById('runBtn').onclick = runProbe;
+window.onload = function () {
+    ps4log('19 — ?render=1 to render B inside trigger. ?write=0 to skip writes.');
+    if (AUTORUN) runProbe();
+    ps4status('ready — Run probe', '#ff0');
+};
+</script>
+</body>
+</html>
