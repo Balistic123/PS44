@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Chained load probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 80vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+.note { color: #aaa; font-size: 12px; margin-bottom: 8px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">chained load probe...</div>
+<p class="note">Investigating second load returning count=0. ONE load per browser session.</p>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+function triggerOnce() {
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER FIRED');
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    return A;
+}
+
+function tryLoad(label, text) {
+    return document.fonts.load('1em x', text).then(function (faces) {
+        ps4log(label + ': resolved count=' + faces.length);
+        for (var i = 0; i < faces.length; i++) {
+            ps4log('  [' + i + '] family=' + faces[i].family + ' status=' + faces[i].status);
+        }
+        return faces;
+    }).catch(function (e) {
+        ps4log(label + ': rejected ' + e);
+    });
+}
+
+function tryCheck(label, text) {
+    var ok = document.fonts.check('1em x', text);
+    ps4log(label + ': fonts.check("' + text + '") = ' + ok);
+}
+
+window.onload = function () {
+    ps4log('Phase 3c — chained load probe');
+    ps4log('UA: ' + navigator.userAgent);
+
+    var A = triggerOnce();
+
+    setTimeout(function () {
+        ps4log('--- after trigger settles ---');
+        tryCheck('check-A', 'A');
+        tryCheck('check-B', 'B');
+        tryCheck('check-AB', 'AB');
+
+        tryLoad('load2-AB', 'AB').then(function () {
+            return tryLoad('load3-AB', 'AB');
+        }).then(function () {
+            return tryLoad('load4-A', 'A');
+        }).then(function () {
+            return tryLoad('load5-B', 'B');
+        }).then(function () {
+            ps4log('--- concurrent burst ---');
+            return Promise.all([
+                document.fonts.load('1em x', 'AB'),
+                document.fonts.load('1em x', 'AB'),
+                document.fonts.load('1em x', 'AB')
+            ]).then(function (results) {
+                for (var r = 0; r < results.length; r++) {
+                    ps4log('burst[' + r + '] count=' + results[r].length);
+                }
+            });
+        }).then(function () {
+            ps4log('A.status final = ' + A.status);
+            ps4status('done', '#0f0');
+        });
+    }, 500);
+};
+</script>
+</body>
+</html>
