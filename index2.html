@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Test Menu</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 16px; }
+a { color: #6cf; display: block; margin: 10px 0; font-size: 14px; text-decoration: none; }
+a:active, a:focus { color: #ff6; }
+h2 { color: #fff; margin-top: 0; }
+h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
+.note { color: #aaa; margin-bottom: 16px; line-height: 1.5; font-size: 13px; }
+.desc { color: #666; font-size: 12px; margin: -6px 0 12px 0; }
+.nav { margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #333; }
+.nav a { display: inline; margin-right: 16px; }
+</style>
+</head>
+<body>
+<h2>Phase 3 — Control &amp; Corruption Probes</h2>
+
+<div class="nav">
+  <a href="../test.html">Original POC</a>
+  <a href="../phase1/index.html">Phase 1</a>
+  <a href="../phase1/results.html">Phase 1 results</a>
+  <a href="roadmap.html">Roadmap</a>
+</div>
+
+<p class="note">
+  <b>Protocol:</b> fully quit PS4 browser between most tests (one trigger per session).<br>
+  Do not refresh repeatedly — OOM stacks leaked memory.<br>
+  Note crash vs "done" / "survived" in each log.
+</p>
+
+<h3>01 — ArrayBuffer spray scan</h3>
+<a href="01-corruption-probe.html">01-corruption-probe.html</a>
+<p class="desc">Spray 4000 buffers → trigger → scan for changed bytes. Baseline corruption check.</p>
+
+<h3>02 — FontFace loader state</h3>
+<a href="02-fontface-state.html">02-fontface-state.html</a>
+<p class="desc">Dump document.fonts before/during/after trigger. Found: second load returned count=0.</p>
+
+<h3>03 — Chained loads</h3>
+<a href="03-chained-load.html">03-chained-load.html</a>
+<p class="desc">Multiple load() + fonts.check(). Found: check('B')=true but load('B')=0.</p>
+
+<h3>04 — Stale B render</h3>
+<a href="04-stale-B-render.html">04-stale-B-render.html</a>
+<p class="desc">Force layout/render of B after deleteRule. Compare offset measurements.</p>
+
+<h3>05 — Deleted rule reference ★</h3>
+<a href="05-deleted-rule-ref.html">05-deleted-rule-ref.html</a>
+<p class="desc">Held cssRules[0] still readable after deleteRule. <b>heldRule.style.fontFamily write OK</b> — stale ref confirmed.</p>
+
+<h3>06 — In-session loop (fixed)</h3>
+<a href="06-in-session-loop.html?n=5">06-in-session-loop.html?n=5</a>
+<a href="06-in-session-loop.html?n=8">06-in-session-loop.html?n=8</a>
+<a href="06-in-session-loop.html?n=12">06-in-session-loop.html?n=12</a>
+<p class="desc">Re-inject @font-face each iteration, <b>one FontFace A reused</b>. Old ?n=10/20 stacked FontFaces and OOM'd before load — fixed.</p>
+
+<h3>07 — Held rule write ★</h3>
+<a href="07-held-rule-write.html">07-held-rule-write.html</a>
+<p class="desc">Write fontFamily/src/unicodeRange to deleted heldRule, then load + render. Next control step.</p>
+
+</body>
+</html>
