@@ -80,7 +80,12 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 
 <h3>12 — UAF focus ★★</h3>
 <a href="12-uaf-focus.html">12-uaf-focus.html</a>
-<p class="desc">All UAF paths combined: trigger, zombie, re-insert, read loop, check/load/render, concurrent + delayed loads. Best single probe.</p>
+<p class="desc">Full UAF sequence. 12: 16 pass typical, load(B) may NetworkError — fixed to local(Helvetica).</p>
+
+<h3>13 — UAF stress (no re-insert)</h3>
+<a href="13-uaf-no-reinsert.html">13-uaf-no-reinsert.html</a>
+<a href="13-uaf-no-reinsert.html?loops=15">?loops=15</a>
+<p class="desc">No re-insert — keeps stale check(B) bug. Looped trigger cycles. May OOM or native crash.</p>
 
 </body>
 </html>

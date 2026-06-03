@@ -182,7 +182,7 @@ window.onload = function () {
         else fail('Stylesheet not empty: ' + sheet.cssRules.length);
 
         sheet.insertRule(
-            "@font-face { font-family: x; src: local(Helvetica Bold); unicode-range: U+0042; }",
+            "@font-face { font-family: x; src: local(Helvetica); unicode-range: U+0042; }",
             0
         );
         var newRule = sheet.cssRules[0];
@@ -196,6 +196,12 @@ window.onload = function () {
 
         if (staleRule.cssText.indexOf('nonexistent-font.woff') !== -1) {
             pass('Step 6c: zombie still has OLD url');
+        }
+
+        if (newRule.cssText.indexOf('local(') !== -1) {
+            pass('Step 6d: new rule uses local() font for B');
+        } else {
+            fail('New rule missing local font');
         }
 
         dumpFonts('after dual-object setup');
