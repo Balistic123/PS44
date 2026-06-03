@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Why is y in document.fonts?</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#log { height: 75vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">probing y in fonts...</div>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+})();
+
+function dumpFonts(label) {
+    ps4log('--- ' + label + ' size=' + document.fonts.size);
+    document.fonts.forEach(function (f, i) {
+        ps4log('  [' + i + '] family=' + f.family + ' status=' + f.status);
+    });
+}
+
+function pass(m) { ps4log('✓ SUCCESS: ' + m, 'ok'); }
+function weird(m) { ps4log('! WEIRD: ' + m, 'weird'); }
+
+window.onload = function () {
+    ps4log('Phase 3k — why family=y in document.fonts? (11)');
+    ps4log('UA: ' + navigator.userAgent);
+    dumpFonts('start');
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+    dumpFonts('after add A');
+
+    var yRef, zRef;
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER');
+                yRef = new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                zRef = new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                ps4log('created y,z — added to document.fonts? y=' + document.fonts.has(yRef) + ' z=' + document.fonts.has(zRef));
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+                dumpFonts('inside trigger after y,z');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+
+    setTimeout(function () {
+        dumpFonts('after trigger');
+        if (document.fonts.size === 2) {
+            weird('fonts.size=2 — y appeared without document.fonts.add(y) (same as test 10)');
+        } else if (document.fonts.size === 1) {
+            pass('Only A in set — y not auto-registered on this run');
+        }
+        if (yRef && document.fonts.has(yRef)) pass('y is in document.fonts set');
+        if (zRef && document.fonts.has(zRef)) pass('z is in document.fonts set');
+        document.getElementById('status').textContent = 'done — read log';
+    }, 800);
+};
+</script>
+</body>
+</html>
