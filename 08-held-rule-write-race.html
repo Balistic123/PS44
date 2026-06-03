@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Held rule write race</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 70vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+#t { font-family: x; font-size: 120px; color: #fff; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">held rule write race...</div>
+<p style="color:#aaa;font-size:12px">07: write fontFamily=z OK but read=x. Test writes during trigger + after load.</p>
+<div id="log"></div>
+<div id="t">B</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+function rw(label, rule, prop, val) {
+    try {
+        if (val !== undefined) rule.style[prop] = val;
+        var got = rule.style[prop];
+        ps4log(label + ' ' + prop + ' => read="' + got + '" cssText=' + rule.cssText.substring(0, 70));
+    } catch (e) {
+        ps4log(label + ' ' + prop + ' err: ' + e);
+    }
+}
+
+window.onload = function () {
+    ps4log('Phase 3h — held rule write race');
+    ps4log('UA: ' + navigator.userAgent);
+
+    var sheet = document.getElementById('s').sheet;
+    var heldRule = sheet.cssRules[0];
+    var heldRules = [heldRule];
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('INSIDE TRIGGER — deleteRule + writes on heldRule');
+                sheet.deleteRule(0);
+                rw('in-trigger', heldRule, 'fontFamily', 'z');
+                rw('in-trigger', heldRule, 'src', 'url(in-trigger.woff)');
+                rw('in-trigger', heldRule, 'unicodeRange', 'U+0041');
+                document.getElementById('t').textContent = 'AB';
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+
+    setTimeout(function () {
+        ps4log('--- after trigger ---');
+        rw('after', heldRule, 'fontFamily', 'zz');
+        rw('after', heldRule, 'src', 'url(after.woff)');
+        rw('after', heldRule, 'unicodeRange', 'U+0042');
+
+        ps4log('cssRules.length=' + sheet.cssRules.length);
+        ps4log('check(B)=' + document.fonts.check('1em x', 'B'));
+
+        document.fonts.load('1em x', 'B').then(function (f) {
+            ps4log('load(B) count=' + f.length);
+        });
+
+        document.fonts.load('1em x', 'AB').then(function (f) {
+            ps4log('load(AB) count=' + f.length);
+        });
+
+        ps4status('done — did any write stick (read != x)?', '#0f0');
+    }, 500);
+};
+</script>
+</body>
+</html>
