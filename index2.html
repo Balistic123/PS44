@@ -85,7 +85,12 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 <h3>13 — UAF stress (no re-insert)</h3>
 <a href="13-uaf-no-reinsert.html">13-uaf-no-reinsert.html</a>
 <a href="13-uaf-no-reinsert.html?loops=15">?loops=15</a>
-<p class="desc">No re-insert — keeps stale check(B) bug. Looped trigger cycles. May OOM or native crash.</p>
+<p class="desc">Looped trigger, no re-insert. check(B)=true after delete every cycle.</p>
+
+<h3>14 — Render B inside trigger</h3>
+<a href="14-render-in-trigger.html">14-render-in-trigger.html</a>
+<a href="14-render-in-trigger.html?loops=15">?loops=15</a>
+<p class="desc">Like 13 but render B + check(B) + zombie read inside then callback. Stresses render path.</p>
 
 </body>
 </html>
