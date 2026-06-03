@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 1 — Isolate trigger components</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 80vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+#menu a { color: #6cf; margin-right: 12px; font-size: 12px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">loading...</div>
+<div id="menu"></div>
+<div id="log"></div>
+<script>
+// Logger inlined so no extra file needed
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+function hookThen(A, body) {
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            ps4log('then getter, this===A: ' + (this === A));
+            if (!fired && this === A) {
+                fired = true;
+                body();
+            }
+            return undefined;
+        }
+    });
+}
+
+function setupA() {
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+    return A;
+}
+
+var tests = {
+    original: function () {
+        var A = setupA();
+        hookThen(A, function () {
+            new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+            new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+            document.getElementById('s').sheet.deleteRule(0);
+            document.body.offsetTop;
+        });
+        document.fonts.load('1em x', 'AB');
+    },
+    'delete-only': function () {
+        var A = setupA();
+        hookThen(A, function () {
+            document.getElementById('s').sheet.deleteRule(0);
+        });
+        document.fonts.load('1em x', 'AB');
+    },
+    'delete-layout': function () {
+        var A = setupA();
+        hookThen(A, function () {
+            document.getElementById('s').sheet.deleteRule(0);
+            document.body.offsetTop;
+        });
+        document.fonts.load('1em x', 'AB');
+    },
+    'delete-yz': function () {
+        var A = setupA();
+        hookThen(A, function () {
+            new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+            new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+            document.getElementById('s').sheet.deleteRule(0);
+        });
+        document.fonts.load('1em x', 'AB');
+    },
+    'text-A': function () {
+        var A = setupA();
+        hookThen(A, function () {
+            document.getElementById('s').sheet.deleteRule(0);
+            document.body.offsetTop;
+        });
+        document.fonts.load('1em x', 'A');
+    },
+    'text-B': function () {
+        var A = setupA();
+        hookThen(A, function () {
+            document.getElementById('s').sheet.deleteRule(0);
+            document.body.offsetTop;
+        });
+        document.fonts.load('1em x', 'B');
+    },
+    'css-only': function () {
+        document.fonts.load('1em x', 'B');
+    }
+};
+
+var testNames = Object.keys(tests);
+var params = location.search.substring(1).split('&');
+var t = 'original';
+for (var i = 0; i < params.length; i++) {
+    var part = params[i].split('=');
+    if (part[0] === 't' && part[1]) t = part[1];
+}
+
+// Build tap-able menu (works on PS4 browser)
+var menu = document.getElementById('menu');
+for (var j = 0; j < testNames.length; j++) {
+    var name = testNames[j];
+    var link = document.createElement('a');
+    link.href = '01-isolate.html?t=' + name;
+    link.textContent = name;
+    if (name === t) link.style.color = '#ff0';
+    menu.appendChild(link);
+}
+
+window.onload = function () {
+    ps4log('Phase 1 isolate: ' + t);
+    ps4log('UA: ' + navigator.userAgent);
+
+    if (!tests[t]) {
+        ps4status('unknown test: ' + t, '#f00');
+        ps4log('valid tests: ' + testNames.join(', '));
+        return;
+    }
+
+    ps4status('running: ' + t, '#ff0');
+    tests[t]();
+    ps4log('trigger dispatched');
+
+    setTimeout(function () {
+        ps4status('survived 3s — test: ' + t, '#0f0');
+        ps4log('still alive after 3s');
+    }, 3000);
+};
+</script>
+</body>
+</html>

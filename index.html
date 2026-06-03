@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 1 — Test Menu</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 16px; }
+a { color: #6cf; display: block; margin: 8px 0; font-size: 14px; }
+h2 { color: #fff; }
+.note { color: #aaa; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<h2>Phase 1 — Isolation Tests</h2>
+<p class="note">Tap a link. Refresh before each test. Note crash vs "survived 3s".</p>
+
+<p><b>Baseline (should crash):</b></p>
+<a href="01-isolate.html">01-isolate.html?t=original (default)</a>
+
+<p><b>Isolate components:</b></p>
+<a href="01-isolate.html?t=delete-only">?t=delete-only</a>
+<a href="01-isolate.html?t=delete-layout">?t=delete-layout</a>
+<a href="01-isolate.html?t=delete-yz">?t=delete-yz</a>
+<a href="01-isolate.html?t=text-A">?t=text-A</a>
+<a href="01-isolate.html?t=text-B">?t=text-B</a>
+<a href="01-isolate.html?t=css-only">?t=css-only</a>
+</body>
+</html>
