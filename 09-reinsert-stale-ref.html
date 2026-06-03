@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Re-insert vs stale ref</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#summary { color: #aaa; font-size: 13px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 70vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+.ok { color: #0f0; }
+.bad { color: #f66; }
+.weird { color: #ff6; }
+#t { font-family: x; font-size: 64px; color: #fff; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">re-insert probe...</div>
+<div id="summary">Running test…</div>
+<div id="log"></div>
+<div id="t">AB</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    var summaryEl = document.getElementById('summary');
+
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+    window.ps4summary = function (msg) {
+        summaryEl.textContent = msg;
+    };
+})();
+
+var verdict = { pass: 0, fail: 0, weird: 0, lines: [] };
+
+function pass(msg) {
+    verdict.pass++;
+    verdict.lines.push('✓ ' + msg);
+    ps4log('✓ SUCCESS: ' + msg, 'ok');
+}
+
+function fail(msg) {
+    verdict.fail++;
+    verdict.lines.push('✗ ' + msg);
+    ps4log('✗ FAILED: ' + msg, 'bad');
+}
+
+function weird(msg) {
+    verdict.weird++;
+    verdict.lines.push('! ' + msg);
+    ps4log('! WEIRD: ' + msg, 'weird');
+}
+
+function dumpSheet(label, sheet) {
+    ps4log(label + ' cssRules.length=' + sheet.cssRules.length);
+    for (var i = 0; i < sheet.cssRules.length; i++) {
+        ps4log('  [' + i + '] ' + sheet.cssRules[i].cssText.substring(0, 70));
+    }
+}
+
+function printFinalSummary() {
+    ps4log('========== FINAL SUMMARY ==========');
+    for (var i = 0; i < verdict.lines.length; i++) {
+        ps4log(verdict.lines[i]);
+    }
+    ps4log('-----------------------------------');
+    ps4log('Passed: ' + verdict.pass + '  Failed: ' + verdict.fail + '  Weird: ' + verdict.weird);
+
+    var headline;
+    if (verdict.pass >= 7 && verdict.weird >= 1) {
+        headline = 'Strong run — stale zombie + new live rule coexist. Read WEIRD lines.';
+        ps4status('strong result — read summary', '#ff6');
+    } else if (verdict.pass >= 7) {
+        headline = 'Good run — dual-object stale ref confirmed. Re-run once with updated local font test.';
+        ps4status('good result — read summary', '#0f0');
+    } else if (verdict.pass > 0 && verdict.fail > 0) {
+        headline = 'Mixed result — some steps worked, some did not.';
+        ps4status('mixed result — read summary', '#ff0');
+    } else if (verdict.pass > 0) {
+        headline = 'Basic steps completed — see if any WEIRD flags appeared.';
+        ps4status('done — read summary', '#0f0');
+    } else {
+        headline = 'Nothing useful succeeded this run.';
+        ps4status('nothing succeeded', '#f66');
+    }
+    ps4summary(headline);
+}
+
+window.onload = function () {
+    ps4log('Phase 3i — re-insert vs stale ref');
+    ps4log('UA: ' + navigator.userAgent);
+
+    var sheet = document.getElementById('s').sheet;
+    var staleRule = sheet.cssRules[0];
+    var staleCssBefore = staleRule.cssText;
+    pass('Got reference to CSS rule before trigger (can read cssText)');
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER deleteRule + y/z FontFaces (original test.html)');
+                new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+
+    setTimeout(function () {
+        if (fired) {
+            pass('Trigger fired (deleteRule ran during font load)');
+        } else {
+            fail('Trigger never fired — this run is invalid, try again');
+        }
+
+        try {
+            var staleAfter = staleRule.cssText;
+            if (staleAfter && staleAfter.length > 0) {
+                pass('Can still READ deleted rule — cssText length ' + staleAfter.length);
+            } else {
+                fail('Deleted rule cssText is empty — stale read gone');
+            }
+        } catch (e) {
+            fail('Reading deleted rule threw: ' + e);
+        }
+
+        if (sheet.cssRules.length === 0) {
+            pass('Stylesheet empty after delete (deleteRule worked)');
+        } else {
+            fail('Stylesheet still has ' + sheet.cssRules.length + ' rule(s) after delete');
+        }
+
+        dumpSheet('after delete', sheet);
+
+        ps4log('re-insert new @font-face for B (local Helvetica Bold — from original POC)');
+        sheet.insertRule(
+            "@font-face { font-family: x; src: local(Helvetica Bold); unicode-range: U+0042; }",
+            0
+        );
+        var newRule = sheet.cssRules[0];
+
+        if (sheet.cssRules.length === 1) {
+            pass('Re-insert worked — stylesheet has 1 rule again');
+        } else {
+            fail('Re-insert failed — expected 1 rule, got ' + sheet.cssRules.length);
+        }
+
+        dumpSheet('after re-insert', sheet);
+
+        if (staleRule === newRule) {
+            weird('Stale ref and new rule are THE SAME object — should normally be different');
+        } else {
+            pass('Two different objects — stale ref kept, new rule is separate (good for research)');
+        }
+
+        var staleHasOld = staleRule.cssText.indexOf('nonexistent-font.woff') !== -1;
+        var newHasLocal = newRule.cssText.indexOf('Helvetica Bold') !== -1 ||
+            newRule.cssText.indexOf('local(') !== -1;
+
+        if (staleHasOld) {
+            pass('Stale rule still shows OLD url (nonexistent-font.woff)');
+        } else {
+            weird('Stale rule no longer shows old url — it may have changed');
+        }
+
+        if (newHasLocal) {
+            pass('New rule uses local(Helvetica Bold) for B');
+        } else {
+            fail('New rule missing local font in cssText');
+        }
+
+        var checkB = document.fonts.check('1em x', 'B');
+        ps4log('check(B)=' + checkB);
+        if (checkB) {
+            weird('fonts.check(B) is true — engine thinks B is covered (may be stale lookup)');
+        } else {
+            pass('fonts.check(B) is false — honest state after re-insert');
+        }
+
+        document.getElementById('t').textContent = 'B';
+        ps4log('render B offset=' + document.getElementById('t').offsetWidth);
+
+        document.fonts.load('1em x', 'B').then(function (f) {
+            ps4log('load(B) count=' + f.length);
+            for (var j = 0; j < f.length; j++) {
+                ps4log('  face[' + j + '] status=' + f[j].status);
+            }
+
+            if (f.length > 0) {
+                pass('load(B) returned ' + f.length + ' face(s) — B can load again after re-insert');
+            } else {
+                fail('load(B) returned 0 faces — B still broken even after re-insert');
+            }
+
+            if (checkB && f.length === 0) {
+                weird('check(B)=true but load(B)=0 — same bug as before (stale lookup vs loader)');
+            }
+
+            printFinalSummary();
+        }).catch(function (e) {
+            var msg = String(e);
+            if (msg.indexOf('NetworkError') !== -1) {
+                weird('load(B) NetworkError — font failed to load (local name wrong or loader still broken)');
+            } else {
+                fail('load(B) threw: ' + e);
+            }
+            printFinalSummary();
+        });
+    }, 500);
+};
+</script>
+</body>
+</html>
