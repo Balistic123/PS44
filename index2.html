@@ -83,14 +83,15 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 <p class="desc">Full UAF sequence. 12: 16 pass typical, load(B) may NetworkError — fixed to local(Helvetica).</p>
 
 <h3>13 — UAF stress (no re-insert)</h3>
-<a href="13-uaf-no-reinsert.html">13-uaf-no-reinsert.html</a>
-<a href="13-uaf-no-reinsert.html?loops=15">?loops=15</a>
-<p class="desc">Looped trigger, no re-insert. check(B)=true after delete every cycle.</p>
+<a href="13-uaf-no-reinsert.html">13 — safe (1 loop)</a>
+<a href="13-uaf-no-reinsert.html?stress=1">13 — OOM stress</a>
+<p class="desc">Default 1 loop. ?loops=N or ?stress=1 for OOM. Quit browser between sessions.</p>
 
 <h3>14 — Render B inside trigger</h3>
-<a href="14-render-in-trigger.html">14-render-in-trigger.html</a>
-<a href="14-render-in-trigger.html?loops=15">?loops=15</a>
-<p class="desc">Like 13 but render B + check(B) + zombie read inside then callback. Stresses render path.</p>
+<a href="14-render-in-trigger.html">14 — safe (1 loop)</a>
+<a href="14-render-in-trigger.html?manual=1">14 — manual (tap to run)</a>
+<a href="14-render-in-trigger.html?stress=1">14 — OOM stress</a>
+<p class="desc">Was 8 loops on load → white screen. Default 1 loop + light render. Stress only when you ask.</p>
 
 </body>
 </html>
