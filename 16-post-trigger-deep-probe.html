@@ -9,6 +9,7 @@ body { font-family: monospace; background: #111; color: #0f0; padding: 12px; mar
 #summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
 #log { height: 66vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
 .ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+.css-changed { color: #6bf; font-weight: bold; }
 #t { font-family: x; font-size: 24px; color: #fff; line-height: 1; }
 </style>
 <style id="s">
@@ -38,10 +39,15 @@ body { font-family: monospace; background: #111; color: #0f0; padding: 12px; mar
     };
 })();
 
-var v = { p: 0, f: 0, w: 0, lines: [] };
+var v = { p: 0, f: 0, w: 0, c: 0, lines: [] };
 function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 'ok'); }
 function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
 function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
+function cssChanged(m) {
+    v.c++;
+    v.lines.push('◆ ' + m);
+    ps4log('◆ cssText CHANGED: ' + m, 'css-changed');
+}
 
 var params = new URLSearchParams(location.search);
 var POST = parseInt(params.get('post') || '6', 10);
@@ -65,9 +71,9 @@ function diffCssText(baseline, current, tag) {
     var b = fingerprint(current);
     if (!baseline) return b;
     if (baseline.len !== b.len || baseline.hash !== b.hash) {
-        weird(tag + ' cssText CHANGED len ' + baseline.len + '->' + b.len + ' hash ' + baseline.hash + '->' + b.hash);
-        ps4log(tag + ' was tail=' + JSON.stringify(baseline.tail));
-        ps4log(tag + ' now tail=' + JSON.stringify(b.tail));
+        cssChanged(tag + ' len ' + baseline.len + '->' + b.len + ' hash ' + baseline.hash + '->' + b.hash);
+        ps4log(tag + ' was tail=' + JSON.stringify(baseline.tail), 'css-changed');
+        ps4log(tag + ' now tail=' + JSON.stringify(b.tail), 'css-changed');
     } else {
         pass(tag + ' cssText fingerprint stable');
     }
@@ -320,10 +326,12 @@ function runProbe() {
 
         setTimeout(function () {
             ps4log('========== SUMMARY ==========');
-            for (var j = 0; j < v.lines.length; j++) ps4log(v.lines[j]);
-            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w);
-            ps4log('Watch: cssText CHANGED = leak/corruption; buffer anomalies; width drift at 24px');
-            ps4status('done weird=' + v.w, '#0f0');
+            for (var j = 0; j < v.lines.length; j++) {
+                ps4log(v.lines[j], v.lines[j].indexOf('◆') === 0 ? 'css-changed' : '');
+            }
+            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w + ' cssTextΔ: ' + v.c, v.c ? 'css-changed' : '');
+            ps4log('Blue = cssText changed | Yellow = other weird | buffer/width in log', v.c ? 'css-changed' : '');
+            ps4status('done weird=' + v.w + ' cssΔ=' + v.c, v.c ? '#6bf' : '#0f0');
         }, 800);
     });
 }
