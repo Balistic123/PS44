@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Alt signals probe (17)</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 66vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+.signal { color: #6bf; font-weight: bold; }
+#t { font-family: x; font-size: 24px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">idle</div>
+<div id="summary">17: identity (stale vs live), style readback, getComputedStyle — blue = SIGNAL changed. One trigger + optional re-insert + 6 post steps. Tap Run.</div>
+<div id="controls" style="margin-bottom:8px;">
+<button id="runBtn" style="font-size:14px;padding:8px 16px;">Run probe</button>
+</div>
+<div id="log"></div>
+<div id="t">.</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (t, c) {
+        document.getElementById('status').textContent = t;
+        if (c) document.getElementById('status').style.color = c;
+    };
+})();
+
+var v = { p: 0, f: 0, w: 0, s: 0, lines: [] };
+function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 'ok'); }
+function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
+function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
+function signal(m) {
+    v.s++;
+    v.lines.push('◆ ' + m);
+    ps4log('◆ SIGNAL: ' + m, 'signal');
+}
+
+var params = new URLSearchParams(location.search);
+var POST = parseInt(params.get('post') || '6', 10);
+var REINSERT = params.get('reinsert') !== '0';
+var WRITE = params.get('write') !== '0';
+var AUTORUN = params.get('autorun') === '1';
+
+var REINSERT_RULE = "@font-face { font-family: x; src: local(Helvetica); unicode-range: U+0042; }";
+
+function snapStyle(rule) {
+    try {
+        return JSON.stringify({
+            fontFamily: String(rule.style.fontFamily),
+            src: String(rule.style.src),
+            unicodeRange: String(rule.style.unicodeRange)
+        });
+    } catch (e) {
+        return 'err:' + e;
+    }
+}
+
+function snapComputed() {
+    var el = document.getElementById('t');
+    el.textContent = 'B';
+    el.style.fontFamily = 'x, sans-serif';
+    el.style.fontSize = '24px';
+    document.body.offsetTop;
+    try {
+        var cs = getComputedStyle(el);
+        return JSON.stringify({
+            fontFamily: cs.fontFamily,
+            fontSize: cs.fontSize,
+            fontWeight: cs.fontWeight,
+            fontStyle: cs.fontStyle
+        });
+    } catch (e) {
+        return 'err:' + e;
+    }
+}
+
+function snapIdentity(sheet, staleRule) {
+    var live = sheet.cssRules.length > 0 ? sheet.cssRules[0] : null;
+    return JSON.stringify({
+        rulesLen: sheet.cssRules.length,
+        staleEqLive: !!(live && staleRule === live),
+        staleEqNew: false,
+        liveSnippet: live ? String(live.cssText).slice(0, 48) : ''
+    });
+}
+
+function snapIdentityWithNew(sheet, staleRule, newRule) {
+    var live = sheet.cssRules.length > 0 ? sheet.cssRules[0] : null;
+    return JSON.stringify({
+        rulesLen: sheet.cssRules.length,
+        staleEqLive: !!(live && staleRule === live),
+        staleEqNew: !!(newRule && staleRule === newRule),
+        liveEqNew: !!(live && newRule && live === newRule),
+        liveSnippet: live ? String(live.cssText).slice(0, 48) : ''
+    });
+}
+
+function diffSnap(baseline, current, tag) {
+    if (baseline === null || baseline === undefined) {
+        ps4log(tag + ' baseline set ' + current);
+        return current;
+    }
+    if (baseline !== current) {
+        signal(tag);
+        ps4log(tag + ' was ' + baseline, 'signal');
+        ps4log(tag + ' now ' + current, 'signal');
+    } else {
+        pass(tag + ' stable');
+    }
+    return current;
+}
+
+function tryStyleWrites(rule, tag) {
+    if (!WRITE) return snapStyle(rule);
+    var before = snapStyle(rule);
+    try {
+        rule.style.fontFamily = 'evil';
+        rule.style.src = 'url(evil.woff)';
+        rule.style.unicodeRange = 'U+0041';
+        document.body.offsetTop;
+    } catch (e) {
+        ps4log(tag + ' writes threw ' + e);
+    }
+    var after = snapStyle(rule);
+    if (before !== after) signal(tag + ' style readback changed after writes');
+    else pass(tag + ' writes did not change readback');
+    return after;
+}
+
+function oneTrigger(sheet, staleRule) {
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER deleteRule');
+                if (sheet.cssRules.length > 0) sheet.deleteRule(0);
+                document.body.offsetTop;
+                if (document.fonts.check('1em x', 'B')) weird('check(B)=true inside trigger');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    if (fired) pass('trigger fired');
+    else fail('trigger never fired');
+
+    try {
+        if (document.fonts.has(A)) document.fonts.delete(A);
+    } catch (e) {
+        ps4log('delete A: ' + e);
+    }
+    return fired;
+}
+
+function runProbe() {
+    v.p = 0; v.f = 0; v.w = 0; v.s = 0; v.lines = [];
+    document.getElementById('log').innerHTML = '';
+    ps4status('running...', '#ff0');
+
+    ps4log('Phase 3q — alt signals probe (17)');
+    ps4log('post=' + POST + ' reinsert=' + REINSERT + ' write=' + WRITE);
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('Blue = identity / style readback / computed changed');
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    var staleRule = sheet.cssRules[0];
+    pass('held stale ref');
+
+    var baseStyle = snapStyle(staleRule);
+    var baseComputed = snapComputed();
+    var baseIdentity = snapIdentity(sheet, staleRule);
+    ps4log('pre-trigger style ' + baseStyle);
+    ps4log('pre-trigger computed ' + baseComputed);
+    ps4log('pre-trigger identity ' + baseIdentity);
+
+    if (!oneTrigger(sheet, staleRule)) {
+        ps4status('aborted', '#f66');
+        return;
+    }
+
+    baseStyle = diffSnap(baseStyle, snapStyle(staleRule), 'after trigger style');
+    baseComputed = diffSnap(baseComputed, snapComputed(), 'after trigger computed');
+    baseIdentity = diffSnap(baseIdentity, snapIdentity(sheet, staleRule), 'after trigger identity');
+
+    baseStyle = tryStyleWrites(staleRule, 'post-delete zombie');
+
+    var newRule = null;
+    if (REINSERT) {
+        sheet.insertRule(REINSERT_RULE, 0);
+        newRule = sheet.cssRules[0];
+        pass('re-inserted live rule');
+
+        var idAfter = snapIdentityWithNew(sheet, staleRule, newRule);
+        baseIdentity = diffSnap(baseIdentity, idAfter, 'after re-insert identity');
+
+        if (staleRule === newRule) weird('stale === newRule (same object)');
+        else pass('stale !== newRule (dual object)');
+
+        if (staleRule.cssText.indexOf('nonexistent-font.woff') >= 0) {
+            pass('stale still has old url in cssText');
+        } else {
+            signal('stale cssText lost old url snippet');
+        }
+        if (newRule.cssText.indexOf('local') >= 0) {
+            pass('new rule has local() in cssText');
+        } else {
+            fail('new rule missing local()');
+        }
+    }
+
+    var mismatch = 0;
+
+    function postStep(i, done) {
+        ps4log('--- post ' + i + ' ---');
+        var cb = document.fonts.check('1em x', 'B');
+
+        document.fonts.load('1em x', 'B').then(function (arr) {
+            ps4log('post ' + i + ' check=' + cb + ' load=' + arr.length);
+            if (cb && arr.length === 0) {
+                mismatch++;
+                if (i === 1) weird('check/load mismatch');
+            }
+
+            baseStyle = diffSnap(baseStyle, snapStyle(staleRule), 'post ' + i + ' style');
+            if (WRITE && i === 1) baseStyle = tryStyleWrites(staleRule, 'post ' + i + ' write');
+
+            if (REINSERT && newRule) {
+                var id = snapIdentityWithNew(sheet, staleRule, newRule);
+                baseIdentity = diffSnap(baseIdentity, id, 'post ' + i + ' identity');
+            } else {
+                baseIdentity = diffSnap(baseIdentity, snapIdentity(sheet, staleRule), 'post ' + i + ' identity');
+            }
+
+            baseComputed = diffSnap(baseComputed, snapComputed(), 'post ' + i + ' computed');
+
+            if (i < POST) postStep(i + 1, done);
+            else done();
+        }).catch(function (e) {
+            ps4log('post ' + i + ' load err=' + e);
+            if (cb) mismatch++;
+            baseComputed = diffSnap(baseComputed, snapComputed(), 'post ' + i + ' computed (err)');
+            if (i < POST) postStep(i + 1, done);
+            else done();
+        });
+    }
+
+    postStep(1, function () {
+        ps4log('--- epilogue ---');
+        var el = document.getElementById('t');
+        el.style.fontSize = '96px';
+        baseComputed = diffSnap(baseComputed, snapComputed(), 'heavy 96px computed');
+
+        if (mismatch > 0) pass('mismatch ' + mismatch + '/' + POST);
+        if (document.fonts.check('1em x', 'B')) weird('final check(B)=true');
+
+        setTimeout(function () {
+            ps4log('========== SUMMARY ==========');
+            for (var j = 0; j < v.lines.length; j++) {
+                ps4log(v.lines[j], v.lines[j].indexOf('◆') === 0 ? 'signal' : '');
+            }
+            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w + ' Signals: ' + v.s, v.s ? 'signal' : '');
+            ps4log('Blue = identity/style/computed drift | Yellow = check/load etc.');
+            ps4status('done signals=' + v.s, v.s ? '#6bf' : '#0f0');
+        }, 600);
+    });
+}
+
+document.getElementById('runBtn').onclick = runProbe;
+window.onload = function () {
+    ps4log('17 — ?reinsert=0 ?write=0 ?post=3');
+    if (AUTORUN) runProbe();
+    ps4status('ready — Run probe', '#ff0');
+};
+</script>
+</body>
+</html>
