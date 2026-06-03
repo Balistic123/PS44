@@ -17,7 +17,11 @@ body { font-family: monospace; background: #111; color: #0f0; padding: 12px; mar
 </head>
 <body>
 <div id="status">running...</div>
-<div id="summary">Fresh FontFace A each cycle (fixed). Render B inside trigger. Quit browser after.</div>
+<div id="summary">Default: 1 cycle, manual off. Use ?loops=8 or ?stress=1 for OOM stress. Quit browser between sessions.</div>
+<div id="controls" style="display:none;margin-bottom:8px;">
+<button id="runOnce" style="font-size:14px;padding:8px 16px;">Run 1 cycle</button>
+<button id="runStress" style="font-size:14px;padding:8px 16px;margin-left:8px;">Run stress (loops)</button>
+</div>
 <div id="log"></div>
 <div id="t">.</div>
 <script>
@@ -40,14 +44,23 @@ function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 
 function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
 function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
 
-var LOOPS = 8;
-var q = location.search.match(/[?&]loops=(\d+)/);
-if (q) LOOPS = parseInt(q[1], 10);
+var params = new URLSearchParams(location.search);
+var LOOPS = 1;
+if (params.has('loops')) LOOPS = Math.max(0, parseInt(params.get('loops'), 10) || 1);
+if (params.get('stress') === '1') LOOPS = Math.max(LOOPS, 8);
+var MANUAL = params.get('manual') === '1' || params.get('autorun') === '0';
+var SKIP_RENDER = params.get('render') === '0';
+var LIGHT = params.get('light') !== '0';
 
 function renderB(label) {
+    if (SKIP_RENDER) {
+        ps4log(label + ' render skipped (?render=0)');
+        return 0;
+    }
     var el = document.getElementById('t');
     el.textContent = 'B';
     el.style.fontFamily = 'x, sans-serif';
+    el.style.fontSize = LIGHT ? '24px' : '96px';
     var w = el.offsetWidth;
     var h = el.offsetHeight;
     ps4log(label + ' render B offset=' + w + 'x' + h);
@@ -56,17 +69,19 @@ function renderB(label) {
     return w;
 }
 
-window.onload = function () {
-    ps4log('Phase 3n — render B inside trigger (14)');
-    ps4log('loops=' + LOOPS + ' — fresh FontFace A per cycle');
-    ps4log('UA: ' + navigator.userAgent);
-    ps4log('');
+function cleanupFace(A) {
+    try {
+        if (A && document.fonts.has(A)) document.fonts.delete(A);
+    } catch (e) {
+        ps4log('fonts.delete(A): ' + e);
+    }
+}
 
+function runCycles(maxCycle) {
     var sheet = document.getElementById('s').sheet;
     var staleRule = sheet.cssRules[0];
-    pass('held stale ref from first @font-face');
 
-    for (var cycle = 1; cycle <= LOOPS; cycle++) {
+    for (var cycle = 1; cycle <= maxCycle; cycle++) {
         ps4log('--- cycle ' + cycle + ' ---');
 
         if (cycle > 1) {
@@ -90,8 +105,10 @@ window.onload = function () {
                     fired = true;
                     ps4log('cycle ' + cycle + ' TRIGGER');
 
-                    new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
-                    new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                    if (!LIGHT) {
+                        new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                        new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                    }
 
                     if (sheet.cssRules.length > 0) sheet.deleteRule(0);
 
@@ -118,6 +135,8 @@ window.onload = function () {
         if (!fired) fail('cycle ' + cycle + ' trigger never fired');
         else pass('cycle ' + cycle + ' trigger fired');
         if (renderInTrigger) pass('cycle ' + cycle + ' render inside trigger');
+
+        cleanupFace(A);
     }
 
     ps4log('--- after all cycles ---');
@@ -142,8 +161,45 @@ window.onload = function () {
         ps4log('========== SUMMARY ==========');
         for (var i = 0; i < v.lines.length; i++) ps4log(v.lines[i]);
         ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w);
+        ps4log('fonts.size=' + document.fonts.size + ' (lower = less leak this session)');
         ps4status('done weird=' + v.w, '#0f0');
     }, 1500);
+}
+
+window.onload = function () {
+    ps4log('Phase 3n — render B inside trigger (14)');
+    ps4log('loops=' + LOOPS + ' light=' + LIGHT + ' manual=' + MANUAL + ' render=' + (SKIP_RENDER ? 'off' : 'on'));
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('OOM stress: ?loops=8 or ?stress=1 — safe observe: default or ?loops=1&manual=1');
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    pass('held stale ref from first @font-face');
+
+    if (MANUAL) {
+        document.getElementById('controls').style.display = 'block';
+        ps4status('ready — tap Run (no auto stress)', '#ff0');
+        document.getElementById('runOnce').onclick = function () {
+            v.p = 0; v.f = 0; v.w = 0; v.lines = [];
+            document.getElementById('log').innerHTML = '';
+            ps4status('running 1 cycle...', '#ff0');
+            runCycles(1);
+        };
+        document.getElementById('runStress').onclick = function () {
+            v.p = 0; v.f = 0; v.w = 0; v.lines = [];
+            document.getElementById('log').innerHTML = '';
+            ps4status('running ' + LOOPS + ' cycles...', '#ff0');
+            runCycles(LOOPS);
+        };
+        return;
+    }
+
+    if (LOOPS < 1) {
+        ps4status('idle — set ?loops=1 or use manual=1', '#ff0');
+        return;
+    }
+
+    runCycles(LOOPS);
 };
 </script>
 </body>
