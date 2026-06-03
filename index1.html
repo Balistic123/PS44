@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Exploitation roadmap</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 16px; line-height: 1.7; }
+h2 { color: #fff; }
+.warn { color: #ff6; }
+a { color: #6cf; }
+</style>
+</head>
+<body>
+<h2>Why OOM ≠ dead end</h2>
+<p>OOM means the process ran out of memory. It does <b>not</b> mean:</p>
+<ul>
+<li>no UAF happened underneath</li>
+<li>no heap corruption occurred before the kill</li>
+<li>the leak isn't caused by broken object lifetimes (often UAF-adjacent)</li>
+<li>you can't groom the heap and trigger once per session</li>
+</ul>
+<p class="warn">We called it a dead end too early. We haven't tried to control anything yet.</p>
+
+<h2>What "control" actually means — in order</h2>
+<ol>
+<li><b>Prove corruption</b> — sprayed buffers change, weird FontFace state, crash at non-OOM fault</li>
+<li><b>Info leak</b> — read a pointer you shouldn't have</li>
+<li><b>addrof</b> — leak address of a JS object</li>
+<li><b>fakeobj / arbitrary R/W</b> — corrupt TypedArray header</li>
+<li><b>ROP/JOP</b> — native code in WebKit process</li>
+<li><b>Kernel</b> — separate problem for 13.50</li>
+</ol>
+<p>We're at step 0→1. OOM on refresh is a constraint, not a verdict.</p>
+
+<h2>Strategy given OOM-on-refresh</h2>
+<ul>
+<li><b>One trigger per browser session</b> — quit browser fully between attempts</li>
+<li><b>Heap spray before AND after trigger</b> — catch freed FontFace slots</li>
+<li><b>Don't refresh</b> — single page load only</li>
+<li><b>Vary spray size/count</b> — match suspected FontFace/CSSFontFace allocation size</li>
+<li><b>Delay work post-trigger</b> — corruption may appear async after font loader timer</li>
+</ul>
+
+<h2>Next file to run</h2>
+<p><a href="01-corruption-probe.html">01-corruption-probe.html</a> — spray, trigger once, scan for changed buffers</p>
+<p>Fully quit browser → open once → read log → quit → repeat</p>
+</body>
+</html>
