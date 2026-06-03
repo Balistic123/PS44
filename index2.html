@@ -76,7 +76,11 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 
 <h3>11 — Why y in document.fonts?</h3>
 <a href="11-y-in-fonts.html">11-y-in-fonts.html</a>
-<p class="desc">10 showed fonts.size=2 with family=y after trigger. Chase if y/z auto-register.</p>
+<p class="desc">10 showed fonts.size=2 with family=y. Result: y/z NOT auto-registered.</p>
+
+<h3>12 — UAF focus ★★</h3>
+<a href="12-uaf-focus.html">12-uaf-focus.html</a>
+<p class="desc">All UAF paths combined: trigger, zombie, re-insert, read loop, check/load/render, concurrent + delayed loads. Best single probe.</p>
 
 </body>
 </html>

