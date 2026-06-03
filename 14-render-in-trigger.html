@@ -17,7 +17,7 @@ body { font-family: monospace; background: #111; color: #0f0; padding: 12px; mar
 </head>
 <body>
 <div id="status">running...</div>
-<div id="summary">Render B inside trigger callback only (new in 14). Looped. Quit browser after.</div>
+<div id="summary">Fresh FontFace A each cycle (fixed). Render B inside trigger. Quit browser after.</div>
 <div id="log"></div>
 <div id="t">.</div>
 <script>
@@ -58,21 +58,27 @@ function renderB(label) {
 
 window.onload = function () {
     ps4log('Phase 3n — render B inside trigger (14)');
-    ps4log('loops=' + LOOPS);
+    ps4log('loops=' + LOOPS + ' — fresh FontFace A per cycle');
     ps4log('UA: ' + navigator.userAgent);
-    ps4log('change vs 13: layout+render B happen INSIDE then callback');
     ps4log('');
 
     var sheet = document.getElementById('s').sheet;
     var staleRule = sheet.cssRules[0];
-    pass('held stale ref');
-
-    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
-    document.fonts.add(A);
-    void A.loaded;
+    pass('held stale ref from first @font-face');
 
     for (var cycle = 1; cycle <= LOOPS; cycle++) {
         ps4log('--- cycle ' + cycle + ' ---');
+
+        if (cycle > 1) {
+            sheet.insertRule(
+                "@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }",
+                0
+            );
+        }
+
+        var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+        document.fonts.add(A);
+        void A.loaded;
 
         var fired = false;
         var renderInTrigger = false;
@@ -110,17 +116,12 @@ window.onload = function () {
         document.fonts.load('1em x', 'AB');
 
         if (!fired) fail('cycle ' + cycle + ' trigger never fired');
-        else if (renderInTrigger) pass('cycle ' + cycle + ' render ran inside trigger');
-
-        if (cycle < LOOPS) {
-            sheet.insertRule(
-                "@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }",
-                0
-            );
-        }
+        else pass('cycle ' + cycle + ' trigger fired');
+        if (renderInTrigger) pass('cycle ' + cycle + ' render inside trigger');
     }
 
     ps4log('--- after all cycles ---');
+    ps4log('fonts.size=' + document.fonts.size);
     var finalCheck = document.fonts.check('1em x', 'B');
     ps4log('final check(B)=' + finalCheck);
     if (finalCheck) weird('final check(B)=true');
@@ -141,9 +142,8 @@ window.onload = function () {
         ps4log('========== SUMMARY ==========');
         for (var i = 0; i < v.lines.length; i++) ps4log(v.lines[i]);
         ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w);
-        ps4log('Native UAF = CE-36329-3 not OOM. OOM = crash.html + refresh.');
         ps4status('done weird=' + v.w, '#0f0');
-    }, 1200);
+    }, 1500);
 };
 </script>
 </body>
