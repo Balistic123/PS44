@@ -99,5 +99,11 @@ h3 { color: #ccc; margin-top: 24px; margin-bottom: 8px; font-size: 14px; }
 <a href="15-post-trigger-probe.html?stress=1">15 — stress</a>
 <p class="desc">ONE trigger, then post load(B)/render loop. Hunts buffer corruption + pointer-like strings in zombie cssText.</p>
 
+<h3>16 — Deep post-trigger probe</h3>
+<a href="16-post-trigger-deep-probe.html">16 — tap Run (safe)</a>
+<a href="16-post-trigger-deep-probe.html?prespray=both">16 + prespray both</a>
+<a href="16-post-trigger-deep-probe.html?postspray=both">16 + post spray</a>
+<p class="desc">Prespray BEFORE trigger, cssText hash diff each post step, fonts.entries log, one 96px B at end.</p>
+
 </body>
 </html>

